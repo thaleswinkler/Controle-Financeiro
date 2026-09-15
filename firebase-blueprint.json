@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Informações do usuário e preferências gerais",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "metaRiquezaPadrao": { "type": "number" },
+        "investimentoAcumuladoAnterior": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid"]
+    },
+    "MonthlyFinancialData": {
+      "title": "MonthlyFinancialData",
+      "description": "Dados financeiros mensais do usuário incluindo receitas, gastos fixos, cartões e aportes",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "monthYear": { "type": "string" },
+        "receitas": { "type": "array" },
+        "gastosFixos": { "type": "array" },
+        "cartoes": { "type": "array" },
+        "investimentos": { "type": "array" },
+        "imprevistos": { "type": "array" },
+        "cards": { "type": "array" },
+        "metaRiqueza": { "type": "number" },
+        "investimentoAcumuladoAnterior": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "monthYear"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Documento de perfil do usuário"
+    },
+    "/users/{userId}/months/{monthYear}": {
+      "schema": "MonthlyFinancialData",
+      "description": "Dados financeiros de cada mês de competência do usuário"
+    }
+  }
+}

@@ -14,6 +14,15 @@ import { CampoRiquezaView } from "./components/CampoRiquezaView";
 import { WhatsAppModal } from "./components/WhatsAppModal";
 import { AiAdvisorModal } from "./components/AiAdvisorModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
+import { AuthModal } from "./components/AuthModal";
+import {
+  auth,
+  subscribeToMonthData,
+  saveMonthDataToCloud,
+  saveUserProfile,
+  logoutUser,
+} from "./lib/firebase";
+import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
 
 const STORAGE_KEY = "fin_iq_pro_data_v2";
 
@@ -33,24 +42,85 @@ export default function App() {
     return INITIAL_DATA;
   });
 
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("resumo");
   const [selectedPeriod, setSelectedPeriod] = useState("2026-09");
   const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
+  // Listen to Firebase Auth state
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (user) {
+        saveUserProfile(user, data.metaRiqueza, data.investimentoAcumuladoAnterior).catch(() => {});
+        addToast("success", "Nuvem Conectada", `Sincronizando como ${user.email || "usuário"}`);
+      }
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Real-time Firestore sync whenever user or selectedPeriod changes
+  useEffect(() => {
+    if (!currentUser) return;
+
+    setIsCloudSyncing(true);
+    const unsubscribeMonth = subscribeToMonthData(
+      currentUser.uid,
+      selectedPeriod,
+      (remoteData) => {
+        setIsCloudSyncing(false);
+        if (remoteData && remoteData.monthYear === selectedPeriod) {
+          setData(remoteData);
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteData));
+          } catch {}
+        } else {
+          // If month doesn't exist on cloud yet, upload current state to seed it
+          saveMonthDataToCloud(currentUser.uid, selectedPeriod, data).catch((err) => {
+            console.error("Erro ao inicializar mês na nuvem:", err);
+          });
+        }
+      },
+      () => setIsCloudSyncing(false)
+    );
+
+    return () => unsubscribeMonth();
+  }, [currentUser, selectedPeriod]);
+
   // Calculate high-level financial health metrics dynamically
   const metrics: FinancialMetrics = useMemo(() => {
     return calculateMetrics(data);
   }, [data]);
 
-  // Persist state changes
+  // Persist state changes locally and in Firebase cloud
   const saveState = (newData: FinancialData) => {
     setData(newData);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newData));
     } catch (e) {
       console.error("Erro ao salvar no localStorage:", e);
+    }
+    if (currentUser) {
+      setIsCloudSyncing(true);
+      saveMonthDataToCloud(currentUser.uid, selectedPeriod, newData)
+        .catch((err) => {
+          console.error("Erro ao salvar na nuvem:", err);
+          addToast("error", "Erro de Sincronização", "Não foi possível salvar na nuvem.");
+        })
+        .finally(() => setIsCloudSyncing(false));
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+      addToast("info", "Conta Desconectada", "Você agora está no modo local.");
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -284,6 +354,10 @@ export default function App() {
       {/* Executive Header */}
       <Header
         data={data}
+        currentUser={currentUser}
+        isCloudSyncing={isCloudSyncing}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onLogout={handleLogout}
         onOpenWhatsAppModal={() => setIsWhatsAppOpen(true)}
         onOpenAdvisorModal={() => setIsAdvisorOpen(true)}
         onExportJSON={handleExportJSON}
@@ -383,6 +457,15 @@ export default function App() {
         onClose={() => setIsAdvisorOpen(false)}
         data={data}
         metrics={metrics}
+      />
+
+      {/* Cloud Authentication Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={(userEmail) => {
+          addToast("success", "Login com Sucesso!", `Conectado como ${userEmail}`);
+        }}
       />
 
       {/* Interactive Toast Notifications */}
