@@ -1,0 +1,6 @@
+{
+  "name": "FinIq - Controle Financeiro Inteligente",
+  "description": "Dashboard financeiro profissional e automatizado com extração inteligente de gastos via WhatsApp (AI), cartões, investimentos e projeção patrimonial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
