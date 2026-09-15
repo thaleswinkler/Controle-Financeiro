@@ -37,5 +37,14 @@ service cloud.firestore {
         allow delete: if isOwner(userId) && isValidId(monthYear);
       }
     }
+
+    // Direct multi-device synchronized workspaces
+    match /workspaces/{workspaceId} {
+      allow read, write: if isValidId(workspaceId);
+
+      match /months/{monthYear} {
+        allow read, write: if isValidId(workspaceId) && isValidId(monthYear);
+      }
+    }
   }
 }

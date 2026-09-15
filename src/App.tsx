@@ -19,10 +19,11 @@ import {
   auth,
   subscribeToMonthData,
   saveMonthDataToCloud,
-  saveUserProfile,
+  getStoredCloudSession,
   logoutUser,
+  CloudUserSession,
 } from "./lib/firebase";
-import { onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { onAuthStateChanged } from "firebase/auth";
 
 const STORAGE_KEY = "fin_iq_pro_data_v2";
 
@@ -42,7 +43,9 @@ export default function App() {
     return INITIAL_DATA;
   });
 
-  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<CloudUserSession | null>(() =>
+    getStoredCloudSession()
+  );
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("resumo");
@@ -51,13 +54,17 @@ export default function App() {
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
-  // Listen to Firebase Auth state
+  // Listen to Firebase Auth state if signed in via Google
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
       if (user) {
-        saveUserProfile(user, data.metaRiqueza, data.investimentoAcumuladoAnterior).catch(() => {});
-        addToast("success", "Nuvem Conectada", `Sincronizando como ${user.email || "usuário"}`);
+        const session: CloudUserSession = {
+          uid: user.uid,
+          email: user.email || "",
+          displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
+          isFirebaseUser: true,
+        };
+        setCurrentUser(session);
       }
     });
     return () => unsubscribeAuth();
@@ -118,6 +125,7 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await logoutUser();
+      setCurrentUser(null);
       addToast("info", "Conta Desconectada", "Você agora está no modo local.");
     } catch (e) {
       console.error(e);
@@ -463,8 +471,9 @@ export default function App() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        onSuccess={(userEmail) => {
-          addToast("success", "Login com Sucesso!", `Conectado como ${userEmail}`);
+        onSuccess={(session) => {
+          setCurrentUser(session);
+          addToast("success", "Nuvem Conectada!", `Sincronizando como ${session.email}`);
         }}
       />
 

@@ -17,11 +17,11 @@ import {
 } from "lucide-react";
 import { FinancialData } from "../types";
 import { exportToCSV } from "../utils/formatters";
-import type { User as FirebaseUser } from "firebase/auth";
+import type { CloudUserSession } from "../lib/firebase";
 
 interface HeaderProps {
   data: FinancialData;
-  currentUser: FirebaseUser | null;
+  currentUser: CloudUserSession | null;
   isCloudSyncing: boolean;
   onOpenAuthModal: () => void;
   onLogout: () => void;

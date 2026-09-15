@@ -12,9 +12,7 @@ import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
+  signOut as firebaseSignOut,
   onAuthStateChanged,
   User,
 } from "firebase/auth";
@@ -46,51 +44,118 @@ export async function testConnection() {
 }
 testConnection();
 
-// Authentication Helpers
-export async function loginWithGoogle() {
+export interface CloudUserSession {
+  uid: string; // workspaceId or auth uid
+  email: string;
+  displayName: string;
+  isFirebaseUser?: boolean;
+}
+
+const CLOUD_SESSION_KEY = "fin_iq_cloud_session_v1";
+
+// Helper to generate a deterministic, cryptographically secure workspace ID
+export async function generateWorkspaceId(email: string, pass: string): Promise<string> {
+  const normalized = `${email.trim().toLowerCase()}:::fin_salt_2026:::${pass.trim()}`;
+  const msgUint8 = new TextEncoder().encode(normalized);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `ws_${hashHex.substring(0, 32)}`;
+}
+
+// Check saved user session
+export function getStoredCloudSession(): CloudUserSession | null {
   try {
-    const result = await signInWithPopup(auth, googleProvider);
-    return result.user;
-  } catch (error: any) {
-    console.error("Erro no login com Google:", error);
-    throw error;
+    const raw = localStorage.getItem(CLOUD_SESSION_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error("Erro ao ler sessão salva:", e);
+  }
+  return null;
+}
+
+export function storeCloudSession(session: CloudUserSession | null) {
+  try {
+    if (session) {
+      localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
+    } else {
+      localStorage.removeItem(CLOUD_SESSION_KEY);
+    }
+  } catch (e) {
+    console.error("Erro ao salvar sessão:", e);
   }
 }
 
-export async function loginWithEmail(email: string, pass: string) {
+// Multi-device Cloud Login with Email & Password/PIN
+export async function authenticateWithCredentials(
+  email: string,
+  pass: string
+): Promise<CloudUserSession> {
+  const workspaceId = await generateWorkspaceId(email, pass);
+  const userRef = doc(db, "workspaces", workspaceId);
+
   try {
-    const result = await signInWithEmailAndPassword(auth, email, pass);
-    return result.user;
-  } catch (error: any) {
-    console.error("Erro no login com email:", error);
-    throw error;
+    const snap = await getDoc(userRef);
+    if (!snap.exists()) {
+      // First time registration: create workspace record
+      await setDoc(userRef, {
+        workspaceId,
+        email: email.trim().toLowerCase(),
+        displayName: email.split("@")[0],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  } catch (e) {
+    console.warn("Aviso ao verificar workspace na nuvem:", e);
   }
+
+  const session: CloudUserSession = {
+    uid: workspaceId,
+    email: email.trim().toLowerCase(),
+    displayName: email.split("@")[0],
+  };
+
+  storeCloudSession(session);
+  return session;
 }
 
-export async function registerWithEmail(email: string, pass: string) {
-  try {
-    const result = await createUserWithEmailAndPassword(auth, email, pass);
-    return result.user;
-  } catch (error: any) {
-    console.error("Erro no cadastro:", error);
-    throw error;
-  }
+// Google Auth Login
+export async function loginWithGoogle(): Promise<CloudUserSession> {
+  const result = await signInWithPopup(auth, googleProvider);
+  const user = result.user;
+  const session: CloudUserSession = {
+    uid: user.uid,
+    email: user.email || "",
+    displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
+    isFirebaseUser: true,
+  };
+  storeCloudSession(session);
+  return session;
 }
 
+// Logout
 export async function logoutUser() {
-  return signOut(auth);
+  storeCloudSession(null);
+  try {
+    if (auth.currentUser) {
+      await firebaseSignOut(auth);
+    }
+  } catch {}
 }
 
-// Subscribe to monthly data
+// Subscribe to monthly data (supports both /workspaces/{id} and /users/{id})
 export function subscribeToMonthData(
-  userId: string,
+  uid: string,
   monthYear: string,
   onData: (data: FinancialData | null) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  // Sanitize doc id
   const docId = monthYear.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const monthRef = doc(db, "users", userId, "months", docId);
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const monthRef = doc(db, collectionName, uid, "months", docId);
 
   return onSnapshot(
     monthRef,
@@ -111,53 +176,22 @@ export function subscribeToMonthData(
 
 // Save monthly data to Firestore
 export async function saveMonthDataToCloud(
-  userId: string,
+  uid: string,
   monthYear: string,
   data: FinancialData
 ) {
   const docId = monthYear.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const monthRef = doc(db, "users", userId, "months", docId);
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const monthRef = doc(db, collectionName, uid, "months", docId);
 
   await setDoc(
     monthRef,
     {
       ...data,
-      userId,
+      userId: uid,
       monthYear,
       updatedAt: new Date().toISOString(),
     },
     { merge: true }
   );
-}
-
-// Save user profile settings
-export async function saveUserProfile(
-  user: User,
-  metaRiquezaPadrao?: number,
-  investimentoAcumuladoAnterior?: number
-) {
-  const userRef = doc(db, "users", user.uid);
-  const snap = await getDoc(userRef);
-
-  if (!snap.exists()) {
-    await setDoc(userRef, {
-      uid: user.uid,
-      email: user.email || "",
-      displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
-      metaRiquezaPadrao: metaRiquezaPadrao || 100000,
-      investimentoAcumuladoAnterior: investimentoAcumuladoAnterior || 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  } else {
-    await setDoc(
-      userRef,
-      {
-        email: user.email || snap.data().email || "",
-        displayName: user.displayName || snap.data().displayName || "Usuário",
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    );
-  }
 }
