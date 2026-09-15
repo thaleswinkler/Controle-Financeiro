@@ -1,12 +1,14 @@
 import React, { useState } from "react";
-import { PlusCircle, Trash2, PiggyBank, Target, TrendingUp, PieChart } from "lucide-react";
+import { PlusCircle, Trash2, Edit3, PiggyBank, Target, TrendingUp, PieChart } from "lucide-react";
 import { Investimento } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
+import { EditTransactionModal } from "./EditTransactionModal";
 
 interface InvestimentosViewProps {
   investimentos: Investimento[];
   totalReceita: number;
   onAddInvestimento: (inv: Omit<Investimento, "id">) => void;
+  onUpdateInvestimento: (inv: Investimento) => void;
   onDeleteInvestimento: (id: string) => void;
 }
 
@@ -14,12 +16,14 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
   investimentos,
   totalReceita,
   onAddInvestimento,
+  onUpdateInvestimento,
   onDeleteInvestimento,
 }) => {
   const [description, setDescription] = useState("");
   const [type, setType] = useState<Investimento["type"]>("Renda Fixa");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(getTodayISO(0));
+  const [editingInvestimento, setEditingInvestimento] = useState<Investimento | null>(null);
 
   const totalAportado = investimentos.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
   const taxaPoupanca = totalReceita > 0 ? (totalAportado / totalReceita) * 100 : 0;
@@ -48,45 +52,54 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
 
   const badgeTypeColor: Record<string, string> = {
     "Renda Fixa": "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
-    "Ações": "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
-    "FIIs": "bg-amber-500/10 text-amber-400 border-amber-500/30",
-    "Cripto": "bg-purple-500/10 text-purple-400 border-purple-500/30",
-    "Reserva": "bg-blue-500/10 text-blue-400 border-blue-500/30",
-    "Outros": "bg-slate-800 text-slate-300 border-slate-700",
+    Ações: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+    FIIs: "bg-indigo-500/10 text-indigo-400 border-indigo-500/30",
+    Cripto: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+    Reserva: "bg-teal-500/10 text-teal-400 border-teal-500/30",
+    Outros: "bg-slate-800 text-slate-300 border-slate-700",
   };
 
   return (
     <div className="space-y-6">
-      {/* Top Banner KPI for Investments */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-4.5 border border-slate-800 border-l-4 border-l-cyan-400 shadow-xl">
-          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-            Aporte Realizado no Mês
-          </span>
-          <h3 className="text-2xl font-black text-white mt-1 font-mono">{formatBRL(totalAportado)}</h3>
-          <p className="text-xs text-slate-400 mt-0.5">Capital novo investido</p>
+      {/* Top Banner KPI */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 border-l-4 border-l-cyan-500 shadow-xl">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Total Aportado no Mês
+            </span>
+            <PiggyBank className="w-4 h-4 text-cyan-400" />
+          </div>
+          <p className="text-2xl font-black text-white mt-2 font-mono">{formatBRL(totalAportado)}</p>
+          <span className="text-[11px] text-slate-400 mt-1 block">Aportes novos deste período</span>
         </div>
 
-        <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-4.5 border border-slate-800 border-l-4 border-l-emerald-400 shadow-xl">
-          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-            Taxa de Aporte / Poupança
-          </span>
-          <h3 className="text-2xl font-black text-emerald-400 mt-1">
+        <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 border-l-4 border-l-emerald-500 shadow-xl">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Taxa de Poupança
+            </span>
+            <Target className="w-4 h-4 text-emerald-400" />
+          </div>
+          <p className="text-2xl font-black text-white mt-2 font-mono">
             {taxaPoupanca.toFixed(1)}%
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {taxaPoupanca >= 20 ? "Meta recomendada atingida (≥20%)" : "Meta recomendada: 20% a 30%"}
           </p>
+          <span className="text-[11px] text-emerald-400 mt-1 block font-medium">
+            {taxaPoupanca >= 20 ? "Excelente! Acima de 20%" : "Recomendado: poupar 20%+"}
+          </span>
         </div>
 
-        <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-4.5 border border-slate-800 border-l-4 border-l-purple-400 shadow-xl">
-          <span className="text-[10px] uppercase font-bold text-slate-400 block">
-            Diversificação do Mês
-          </span>
-          <h3 className="text-2xl font-black text-purple-300 mt-1">
-            {Object.keys(classBreakdown).length} Classes
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">Classes de ativos aportadas</p>
+        <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 border-l-4 border-l-purple-500 shadow-xl">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+              Classes Diversificadas
+            </span>
+            <PieChart className="w-4 h-4 text-purple-400" />
+          </div>
+          <p className="text-2xl font-black text-white mt-2 font-mono">
+            {Object.keys(classBreakdown).length} classes
+          </p>
+          <span className="text-[11px] text-slate-400 mt-1 block">Renda Fixa, Ações, FIIs, etc.</span>
         </div>
       </div>
 
@@ -98,41 +111,41 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
               <PlusCircle className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white">Novo Aporte Mensal</h3>
-              <p className="text-[11px] text-slate-400">Construção do seu patrimônio futuro</p>
+              <h3 className="text-sm font-bold text-white">Novo Aporte / Investimento</h3>
+              <p className="text-[11px] text-slate-400">Registre compras de ativos e poupança</p>
             </div>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3.5 text-xs">
             <div>
-              <label className="block text-slate-400 font-medium mb-1">Descrição / Ativo</label>
+              <label className="block text-slate-400 font-medium mb-1">Nome do Ativo / Destino</label>
               <input
                 type="text"
                 required
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Ex: Tesouro Selic 2029, IVVB11, HGLG11, CDB"
+                placeholder="Ex: Tesouro Selic 2029, IVVB11, HGLG11"
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
               />
             </div>
 
-            <div>
-              <label className="block text-slate-400 font-medium mb-1">Classe de Ativo</label>
-              <select
-                value={type}
-                onChange={(e) => setType(e.target.value as Investimento["type"])}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-cyan-500 focus:outline-none"
-              >
-                <option value="Renda Fixa">Renda Fixa (Tesouro, CDB, LCI/LCA)</option>
-                <option value="Ações">Ações & ETFs Nacionais / Globais</option>
-                <option value="FIIs">Fundos Imobiliários (FIIs)</option>
-                <option value="Cripto">Criptomoedas (BTC, ETH, etc.)</option>
-                <option value="Reserva">Reserva de Emergência com Liquidez</option>
-                <option value="Outros">Outros Investimentos</option>
-              </select>
-            </div>
-
             <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-slate-400 font-medium mb-1">Classe do Ativo</label>
+                <select
+                  value={type}
+                  onChange={(e) => setType(e.target.value as Investimento["type"])}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-cyan-500 focus:outline-none"
+                >
+                  <option value="Renda Fixa">Renda Fixa</option>
+                  <option value="Ações">Ações</option>
+                  <option value="FIIs">FIIs</option>
+                  <option value="Cripto">Cripto</option>
+                  <option value="Reserva">Reserva</option>
+                  <option value="Outros">Outros</option>
+                </select>
+              </div>
+
               <div>
                 <label className="block text-slate-400 font-medium mb-1">Valor Aportado (R$)</label>
                 <input
@@ -146,57 +159,55 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white font-mono placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
                 />
               </div>
-              <div>
-                <label className="block text-slate-400 font-medium mb-1">Data do Aporte</label>
-                <input
-                  type="date"
-                  required
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-cyan-500 focus:outline-none"
-                />
-              </div>
+            </div>
+
+            <div>
+              <label className="block text-slate-400 font-medium mb-1">Data do Aporte</label>
+              <input
+                type="date"
+                required
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-cyan-500 focus:outline-none"
+              />
             </div>
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 font-bold text-slate-950 rounded-xl transition-all shadow-lg shadow-cyan-600/20 active:scale-95 text-xs"
+              className="w-full py-2.5 bg-cyan-500 hover:bg-cyan-400 font-bold text-slate-950 rounded-xl transition-all shadow-lg shadow-cyan-500/20 active:scale-95 text-xs cursor-pointer"
             >
               Registrar Aporte
             </button>
           </form>
         </div>
 
-        {/* Table & Allocation Breakdown */}
+        {/* Table & Breakdown */}
         <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 shadow-xl lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <PiggyBank className="w-4 h-4 text-cyan-400" />
-                <span>Aportes Realizados no Mês</span>
+                <TrendingUp className="w-4 h-4 text-cyan-400" />
+                <span>Extrato de Aportes Mensais</span>
               </h3>
-              <p className="text-[11px] text-slate-400">Detalhamento dos investimentos aplicados</p>
+              <p className="text-[11px] text-slate-400">Alocação de capital e construção de patrimônio</p>
             </div>
             <div className="text-right">
-              <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Aportes</span>
+              <span className="text-[10px] text-slate-400 block uppercase font-bold">Subtotal Aportes</span>
               <span className="text-base font-extrabold text-cyan-400 bg-cyan-500/10 px-3 py-1 rounded-xl border border-cyan-500/20 inline-block font-mono">
                 {formatBRL(totalAportado)}
               </span>
             </div>
           </div>
 
-          {/* Asset Allocation Pills */}
+          {/* Mini Class Breakdown Pills */}
           {Object.keys(classBreakdown).length > 0 && (
-            <div className="flex flex-wrap gap-2 py-1">
-              {Object.entries(classBreakdown).map(([className, rawVal]) => {
+            <div className="flex flex-wrap gap-2 p-3 bg-slate-950/40 rounded-xl border border-slate-800">
+              {Object.entries(classBreakdown).map(([cl, rawVal]) => {
                 const val = Number(rawVal) || 0;
                 return (
-                  <div
-                    key={className}
-                    className="px-2.5 py-1 rounded-xl bg-slate-800/60 border border-slate-800 flex items-center gap-2 text-xs"
-                  >
-                    <span className="text-slate-400">{className}:</span>
-                    <span className="font-bold text-white font-mono">{formatBRL(val)}</span>
+                  <div key={cl} className="text-xs flex items-center gap-1.5 font-medium">
+                    <span className="text-slate-400">{cl}:</span>
+                    <span className="text-white font-bold font-mono">{formatBRL(val)}</span>
                     <span className="text-[10px] text-cyan-400">
                       ({((val / (totalAportado || 1)) * 100).toFixed(0)}%)
                     </span>
@@ -214,7 +225,7 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                   <th className="py-3 px-4 font-semibold">Classe</th>
                   <th className="py-3 px-4 font-semibold">Data</th>
                   <th className="py-3 px-4 text-right font-semibold">Valor Aportado</th>
-                  <th className="py-3 px-4 text-center font-semibold">Ação</th>
+                  <th className="py-3 px-4 text-center font-semibold">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
@@ -226,7 +237,7 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                   </tr>
                 ) : (
                   investimentos.map((i) => (
-                    <tr key={i.id} className="hover:bg-slate-800/40 transition-colors">
+                    <tr key={i.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="py-3 px-4 font-medium text-white">{i.description}</td>
                       <td className="py-3 px-4">
                         <span
@@ -242,13 +253,22 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                         {formatBRL(i.amount)}
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => onDeleteInvestimento(i.id)}
-                          className="text-slate-500 hover:text-rose-400 transition-colors p-1"
-                          title="Remover aporte"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => setEditingInvestimento(i)}
+                            className="text-slate-400 hover:text-cyan-300 p-1 rounded-md hover:bg-slate-800 transition-colors"
+                            title="Editar aporte"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => onDeleteInvestimento(i.id)}
+                            className="text-slate-500 hover:text-rose-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                            title="Remover aporte"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -258,6 +278,19 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {editingInvestimento && (
+        <EditTransactionModal
+          isOpen={!!editingInvestimento}
+          onClose={() => setEditingInvestimento(null)}
+          target={{ kind: "investimento", item: editingInvestimento }}
+          onSaveInvestimento={(updated) => {
+            onUpdateInvestimento(updated);
+            setEditingInvestimento(null);
+          }}
+        />
+      )}
     </div>
   );
 };

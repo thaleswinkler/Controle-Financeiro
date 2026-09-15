@@ -1,23 +1,27 @@
 import React, { useState } from "react";
-import { PlusCircle, Trash2, TrendingUp, DollarSign, Wallet } from "lucide-react";
+import { PlusCircle, Trash2, Edit3, TrendingUp, DollarSign, Wallet } from "lucide-react";
 import { Receita } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
+import { EditTransactionModal } from "./EditTransactionModal";
 
 interface ReceitasViewProps {
   receitas: Receita[];
   onAddReceita: (receita: Omit<Receita, "id">) => void;
+  onUpdateReceita: (receita: Receita) => void;
   onDeleteReceita: (id: string) => void;
 }
 
 export const ReceitasView: React.FC<ReceitasViewProps> = ({
   receitas,
   onAddReceita,
+  onUpdateReceita,
   onDeleteReceita,
 }) => {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(getTodayISO(0));
   const [category, setCategory] = useState("Salário");
+  const [editingReceita, setEditingReceita] = useState<Receita | null>(null);
 
   const total = receitas.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
@@ -65,21 +69,21 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
             <button
               type="button"
               onClick={() => fillQuickPreset("Salário Mensal", "Salário")}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60"
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
             >
               + Salário
             </button>
             <button
               type="button"
               onClick={() => fillQuickPreset("Projeto Freelance", "Freelance")}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60"
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
             >
               + Freelance
             </button>
             <button
               type="button"
               onClick={() => fillQuickPreset("Rendimentos / Dividendos", "Investimentos")}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60"
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
             >
               + Dividendos
             </button>
@@ -126,23 +130,24 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-slate-400 font-medium mb-1">Categoria de Entrada</label>
+            <label className="block text-slate-400 font-medium mb-1">Categoria</label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-emerald-500 focus:outline-none"
             >
-              <option value="Salário">Salário / Pró-labore</option>
-              <option value="Freelance">Freelance / Prestação de Serviço</option>
-              <option value="Investimentos">Rendimentos / Dividendos</option>
-              <option value="Comissão">Comissão / Bônus</option>
+              <option value="Salário">Salário / CLT / Pro-labore</option>
+              <option value="Freelance">Freelance / Serviços Extras</option>
+              <option value="Investimentos">Investimentos / Dividendos</option>
+              <option value="Comissão">Comissão / Bonificação</option>
+              <option value="Vendas">Venda de Bens / Desapego</option>
               <option value="Outros">Outras Entradas</option>
             </select>
           </div>
 
           <button
             type="submit"
-            className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 font-bold text-slate-950 rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-95 text-xs"
+            className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 font-bold text-slate-950 rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-95 text-xs cursor-pointer"
           >
             Adicionar Receita
           </button>
@@ -161,7 +166,7 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
           </div>
           <div className="text-right">
             <span className="text-[10px] text-slate-400 block uppercase font-bold">Total Receitas</span>
-            <span className="text-base font-extrabold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-xl border border-emerald-500/20 inline-block">
+            <span className="text-base font-extrabold text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-xl border border-emerald-500/20 inline-block font-mono">
               {formatBRL(total)}
             </span>
           </div>
@@ -175,7 +180,7 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
                 <th className="py-3 px-4 font-semibold">Categoria</th>
                 <th className="py-3 px-4 font-semibold">Data</th>
                 <th className="py-3 px-4 text-right font-semibold">Valor</th>
-                <th className="py-3 px-4 text-center font-semibold">Ação</th>
+                <th className="py-3 px-4 text-center font-semibold">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
@@ -187,7 +192,7 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
                 </tr>
               ) : (
                 receitas.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-800/40 transition-colors">
+                  <tr key={r.id} className="hover:bg-slate-800/40 transition-colors group">
                     <td className="py-3 px-4 font-medium text-white">{r.description}</td>
                     <td className="py-3 px-4">
                       <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 border border-slate-700">
@@ -199,13 +204,22 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
                       {formatBRL(r.amount)}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <button
-                        onClick={() => onDeleteReceita(r.id)}
-                        className="text-slate-500 hover:text-rose-400 transition-colors p-1"
-                        title="Remover receita"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          onClick={() => setEditingReceita(r)}
+                          className="text-slate-400 hover:text-emerald-400 p-1 rounded-md hover:bg-slate-800 transition-colors"
+                          title="Editar receita"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => onDeleteReceita(r.id)}
+                          className="text-slate-500 hover:text-rose-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                          title="Remover receita"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -214,6 +228,19 @@ export const ReceitasView: React.FC<ReceitasViewProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {editingReceita && (
+        <EditTransactionModal
+          isOpen={!!editingReceita}
+          onClose={() => setEditingReceita(null)}
+          target={{ kind: "receita", item: editingReceita }}
+          onSaveReceita={(updated) => {
+            onUpdateReceita(updated);
+            setEditingReceita(null);
+          }}
+        />
+      )}
     </div>
   );
 };

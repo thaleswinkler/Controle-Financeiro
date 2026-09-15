@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { FinancialData, FinancialMetrics, TabType, ExtractedItem, Receita, GastoFixo, GastoCartao, Investimento, GastoImprevisto } from "./types";
+import { FinancialData, FinancialMetrics, TabType, ExtractedItem, Receita, GastoFixo, GastoCartao, Investimento, GastoImprevisto, CardConfig } from "./types";
 import { INITIAL_DATA } from "./data/mockData";
 import { calculateMetrics, getTodayISO } from "./utils/formatters";
 import { Header } from "./components/Header";
@@ -34,7 +34,11 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && Array.isArray(parsed.receitas) && Array.isArray(parsed.cartoes)) {
-          return parsed;
+          return {
+            ...INITIAL_DATA,
+            ...parsed,
+            cards: Array.isArray(parsed.cards) && parsed.cards.length > 0 ? parsed.cards : INITIAL_DATA.cards,
+          };
         }
       }
     } catch (e) {
@@ -156,6 +160,12 @@ export default function App() {
     addToast("success", "Receita adicionada", `${item.description} cadastrada com sucesso.`);
   };
 
+  const handleUpdateReceita = (updated: Receita) => {
+    const newReceitas = data.receitas.map((r) => (r.id === updated.id ? updated : r));
+    saveState({ ...data, receitas: newReceitas });
+    addToast("success", "Receita atualizada", `${updated.description} alterada com sucesso.`);
+  };
+
   const handleDeleteReceita = (id: string) => {
     saveState({ ...data, receitas: data.receitas.filter((r) => r.id !== id) });
     addToast("info", "Receita removida");
@@ -165,6 +175,12 @@ export default function App() {
     const item: GastoFixo = { id: "fix_" + Date.now(), ...newFixo };
     saveState({ ...data, gastosFixos: [...data.gastosFixos, item] });
     addToast("success", "Gasto fixo cadastrado", `${item.description} adicionado.`);
+  };
+
+  const handleUpdateGastoFixo = (updated: GastoFixo) => {
+    const newFixos = data.gastosFixos.map((f) => (f.id === updated.id ? updated : f));
+    saveState({ ...data, gastosFixos: newFixos });
+    addToast("success", "Gasto fixo atualizado", `${updated.description} alterado com sucesso.`);
   };
 
   const handleToggleFixStatus = (id: string) => {
@@ -211,15 +227,52 @@ export default function App() {
     addToast("success", "Compra no cartão lançada", `${item.description} no ${item.card}.`);
   };
 
+  const handleUpdateGastoCartao = (updated: GastoCartao) => {
+    const newCartoes = data.cartoes.map((c) => (c.id === updated.id ? updated : c));
+    saveState({ ...data, cartoes: newCartoes });
+    addToast("success", "Compra no cartão atualizada", `${updated.description} alterada.`);
+  };
+
   const handleDeleteGastoCartao = (id: string) => {
     saveState({ ...data, cartoes: data.cartoes.filter((c) => c.id !== id) });
     addToast("info", "Lançamento de cartão removido");
+  };
+
+  const handleSaveCard = (card: CardConfig) => {
+    const existingIndex = data.cards.findIndex((c) => c.id === card.id);
+    let updatedCards: CardConfig[];
+    if (existingIndex >= 0) {
+      updatedCards = [...data.cards];
+      updatedCards[existingIndex] = card;
+      addToast("success", `Cartão ${card.name} atualizado`, `Vencimento ajustado para dia ${card.dueDay}.`);
+    } else {
+      updatedCards = [...data.cards, card];
+      addToast("success", `Cartão ${card.name} cadastrado`, `Vencimento dia ${card.dueDay}, fechamento dia ${card.closingDay}.`);
+    }
+    saveState({ ...data, cards: updatedCards });
+  };
+
+  const handleDeleteCard = (cardId: string) => {
+    if (data.cards.length <= 1) {
+      addToast("warning", "Atenção", "É necessário manter ao menos 1 cartão configurado.");
+      return;
+    }
+    const cardName = data.cards.find((c) => c.id === cardId)?.name || "Cartão";
+    const updatedCards = data.cards.filter((c) => c.id !== cardId);
+    saveState({ ...data, cards: updatedCards });
+    addToast("info", `Cartão ${cardName} removido`);
   };
 
   const handleAddInvestimento = (newInv: Omit<Investimento, "id">) => {
     const item: Investimento = { id: "inv_" + Date.now(), ...newInv };
     saveState({ ...data, investimentos: [item, ...data.investimentos] });
     addToast("success", "Aporte registrado!", `${item.description} adicionado ao patrimônio.`);
+  };
+
+  const handleUpdateInvestimento = (updated: Investimento) => {
+    const newInvs = data.investimentos.map((i) => (i.id === updated.id ? updated : i));
+    saveState({ ...data, investimentos: newInvs });
+    addToast("success", "Aporte atualizado", `${updated.description} alterado com sucesso.`);
   };
 
   const handleDeleteInvestimento = (id: string) => {
@@ -231,6 +284,12 @@ export default function App() {
     const item: GastoImprevisto = { id: "imp_" + Date.now(), ...newImp };
     saveState({ ...data, imprevistos: [item, ...data.imprevistos] });
     addToast("warning", "Imprevisto registrado", `${item.description} computado.`);
+  };
+
+  const handleUpdateImprevisto = (updated: GastoImprevisto) => {
+    const newImps = data.imprevistos.map((imp) => (imp.id === updated.id ? updated : imp));
+    saveState({ ...data, imprevistos: newImps });
+    addToast("success", "Imprevisto atualizado", `${updated.description} alterado.`);
   };
 
   const handleDeleteImprevisto = (id: string) => {
@@ -399,6 +458,7 @@ export default function App() {
           <ReceitasView
             receitas={data.receitas}
             onAddReceita={handleAddReceita}
+            onUpdateReceita={handleUpdateReceita}
             onDeleteReceita={handleDeleteReceita}
           />
         )}
@@ -407,6 +467,7 @@ export default function App() {
           <GastosFixosView
             gastosFixos={data.gastosFixos}
             onAddGastoFixo={handleAddGastoFixo}
+            onUpdateGastoFixo={handleUpdateGastoFixo}
             onToggleStatus={handleToggleFixStatus}
             onMarkAllAsPaid={handleMarkAllAsPaid}
             onDeleteGastoFixo={handleDeleteGastoFixo}
@@ -419,7 +480,10 @@ export default function App() {
             cards={data.cards}
             cartoes={data.cartoes}
             onAddGastoCartao={handleAddGastoCartao}
+            onUpdateGastoCartao={handleUpdateGastoCartao}
             onDeleteGastoCartao={handleDeleteGastoCartao}
+            onSaveCard={handleSaveCard}
+            onDeleteCard={handleDeleteCard}
           />
         )}
 
@@ -428,6 +492,7 @@ export default function App() {
             investimentos={data.investimentos}
             totalReceita={metrics.totalReceita}
             onAddInvestimento={handleAddInvestimento}
+            onUpdateInvestimento={handleUpdateInvestimento}
             onDeleteInvestimento={handleDeleteInvestimento}
           />
         )}
@@ -437,6 +502,7 @@ export default function App() {
             imprevistos={data.imprevistos}
             totalReceita={metrics.totalReceita}
             onAddImprevisto={handleAddImprevisto}
+            onUpdateImprevisto={handleUpdateImprevisto}
             onDeleteImprevisto={handleDeleteImprevisto}
           />
         )}

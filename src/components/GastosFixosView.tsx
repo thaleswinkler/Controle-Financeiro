@@ -8,13 +8,16 @@ import {
   CheckCheck,
   AlertCircle,
   CopyPlus,
+  Edit3,
 } from "lucide-react";
 import { GastoFixo } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
+import { EditTransactionModal } from "./EditTransactionModal";
 
 interface GastosFixosViewProps {
   gastosFixos: GastoFixo[];
   onAddGastoFixo: (fixo: Omit<GastoFixo, "id">) => void;
+  onUpdateGastoFixo: (fixo: GastoFixo) => void;
   onToggleStatus: (id: string) => void;
   onMarkAllAsPaid: () => void;
   onDeleteGastoFixo: (id: string) => void;
@@ -24,6 +27,7 @@ interface GastosFixosViewProps {
 export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
   gastosFixos,
   onAddGastoFixo,
+  onUpdateGastoFixo,
   onToggleStatus,
   onMarkAllAsPaid,
   onDeleteGastoFixo,
@@ -34,6 +38,7 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
   const [date, setDate] = useState(getTodayISO(5));
   const [status, setStatus] = useState<"pago" | "pendente">("pendente");
   const [category, setCategory] = useState("Moradia");
+  const [editingFixo, setEditingFixo] = useState<GastoFixo | null>(null);
 
   const today = getTodayISO();
 
@@ -93,23 +98,30 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
             <button
               type="button"
               onClick={() => fillQuickPreset("Aluguel / Condomínio", "Moradia")}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60"
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
             >
               + Aluguel
             </button>
             <button
               type="button"
-              onClick={() => fillQuickPreset("Energia Elétrica (Luz)", "Contas")}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60"
+              onClick={() => fillQuickPreset("Energia Elétrica", "Contas")}
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
             >
-              + Luz
+              + Energia
             </button>
             <button
               type="button"
-              onClick={() => fillQuickPreset("Internet Fibra", "Telecom")}
-              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60"
+              onClick={() => fillQuickPreset("Internet Fibra", "Contas")}
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
             >
               + Internet
+            </button>
+            <button
+              type="button"
+              onClick={() => fillQuickPreset("Plano de Saúde", "Saúde")}
+              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700/60 cursor-pointer"
+            >
+              + Saúde
             </button>
           </div>
         </div>
@@ -122,7 +134,7 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
               required
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ex: Aluguel, Condomínio, Energia, Internet"
+              placeholder="Ex: Aluguel, Conta de Luz, Internet Fibra"
               className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
             />
           </div>
@@ -155,6 +167,17 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
+              <label className="block text-slate-400 font-medium mb-1">Status</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as "pago" | "pendente")}
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="pendente">Pendente ⏳</option>
+                <option value="pago">Pago ✅</option>
+              </select>
+            </div>
+            <div>
               <label className="block text-slate-400 font-medium mb-1">Categoria</label>
               <select
                 value={category}
@@ -162,79 +185,59 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-indigo-500 focus:outline-none"
               >
                 <option value="Moradia">Moradia</option>
-                <option value="Contas">Contas de Consumo</option>
-                <option value="Telecom">Telecom / Internet</option>
-                <option value="Saúde">Saúde & Bem-estar</option>
-                <option value="Educação">Educação & Cursos</option>
+                <option value="Contas">Contas / Serviços</option>
+                <option value="Educação">Educação</option>
+                <option value="Saúde">Saúde</option>
+                <option value="Veículo">Veículo / Transporte</option>
                 <option value="Outros">Outros</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-slate-400 font-medium mb-1">Status Inicial</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as "pago" | "pendente")}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-indigo-500 focus:outline-none"
-              >
-                <option value="pendente">Pendente</option>
-                <option value="pago">Já Pago</option>
               </select>
             </div>
           </div>
 
           <button
             type="submit"
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 font-bold text-white rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95 text-xs"
+            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 font-bold text-white rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-95 text-xs cursor-pointer"
           >
-            Cadastrar Gasto Fixo
+            Adicionar Gasto Fixo
           </button>
         </form>
       </div>
 
-      {/* Table & Automation Actions */}
+      {/* List / Table */}
       <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 shadow-xl lg:col-span-2 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Receipt className="w-4 h-4 text-indigo-400" />
-              <span>Contas Recorrentes do Mês</span>
+              <span>Contas Fixas Cadastradas ({gastosFixos.length})</span>
             </h3>
-            <p className="text-[11px] text-slate-400">Clique no status para alternar entre Pago e Pendente</p>
+            <p className="text-[11px] text-slate-400">
+              Total Geral:{" "}
+              <strong className="text-white font-mono">{formatBRL(totalGeral)}</strong> • Pago:{" "}
+              <span className="text-emerald-400 font-mono">{formatBRL(totalPago)}</span> • Pendente:{" "}
+              <span className="text-amber-400 font-mono">{formatBRL(totalPendente)}</span>
+            </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-            <button
-              onClick={onMarkAllAsPaid}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 font-semibold text-xs border border-emerald-500/30 flex items-center gap-1.5 transition-colors"
-              title="Marcar todas as contas como pagas"
-            >
-              <CheckCheck className="w-3.5 h-3.5" />
-              <span>Pagar Todos</span>
-            </button>
+          <div className="flex items-center gap-2">
             <button
               onClick={onReplicateNextMonth}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 font-semibold text-xs border border-indigo-500/30 flex items-center gap-1.5 transition-colors"
-              title="Replicar estes custos fixos para o próximo mês"
+              title="Copiar estas despesas para o próximo mês"
+              className="px-2.5 py-1.5 rounded-xl border border-slate-700 hover:border-indigo-500/50 bg-slate-800/80 hover:bg-indigo-500/10 text-[11px] font-semibold text-slate-300 hover:text-indigo-300 transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <CopyPlus className="w-3.5 h-3.5" />
-              <span>Replicar Próx. Mês</span>
+              <span>Replicar p/ Mês Seguinte</span>
             </button>
-          </div>
-        </div>
 
-        {/* Subtotals bar */}
-        <div className="grid grid-cols-3 gap-2.5 py-1">
-          <div className="p-2.5 rounded-xl bg-slate-800/40 border border-slate-800 text-center">
-            <span className="text-[10px] text-slate-400 uppercase font-bold block">Total Fixos</span>
-            <span className="text-xs font-black text-white">{formatBRL(totalGeral)}</span>
-          </div>
-          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
-            <span className="text-[10px] text-emerald-400 uppercase font-bold block">Pago</span>
-            <span className="text-xs font-black text-emerald-400">{formatBRL(totalPago)}</span>
-          </div>
-          <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
-            <span className="text-[10px] text-amber-400 uppercase font-bold block">Pendente</span>
-            <span className="text-xs font-black text-amber-400">{formatBRL(totalPendente)}</span>
+            {totalPendente > 0 && (
+              <button
+                onClick={onMarkAllAsPaid}
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-[11px] font-semibold text-emerald-400 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <CheckCheck className="w-3.5 h-3.5" />
+                <span>Quitar Todas</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -246,7 +249,7 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
                 <th className="py-3 px-4 font-semibold">Vencimento</th>
                 <th className="py-3 px-4 font-semibold">Status</th>
                 <th className="py-3 px-4 text-right font-semibold">Valor</th>
-                <th className="py-3 px-4 text-center font-semibold">Ação</th>
+                <th className="py-3 px-4 text-center font-semibold">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/50">
@@ -260,7 +263,7 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
                 gastosFixos.map((f) => {
                   const isOverdue = f.status === "pendente" && f.date < today;
                   return (
-                    <tr key={f.id} className="hover:bg-slate-800/40 transition-colors">
+                    <tr key={f.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="py-3 px-4 font-medium text-white">
                         <div className="flex items-center gap-2">
                           <span>{f.description}</span>
@@ -298,13 +301,22 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
                         {formatBRL(f.amount)}
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <button
-                          onClick={() => onDeleteGastoFixo(f.id)}
-                          className="text-slate-500 hover:text-rose-400 transition-colors p-1"
-                          title="Remover gasto fixo"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            onClick={() => setEditingFixo(f)}
+                            className="text-slate-400 hover:text-indigo-300 p-1 rounded-md hover:bg-slate-800 transition-colors"
+                            title="Editar gasto fixo"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => onDeleteGastoFixo(f.id)}
+                            className="text-slate-500 hover:text-rose-400 transition-colors p-1 rounded-md hover:bg-slate-800"
+                            title="Remover gasto fixo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -314,6 +326,19 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Edit Modal */}
+      {editingFixo && (
+        <EditTransactionModal
+          isOpen={!!editingFixo}
+          onClose={() => setEditingFixo(null)}
+          target={{ kind: "fixo", item: editingFixo }}
+          onSaveFixo={(updated) => {
+            onUpdateGastoFixo(updated);
+            setEditingFixo(null);
+          }}
+        />
+      )}
     </div>
   );
 };
