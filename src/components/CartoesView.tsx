@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import {
   CreditCard,
   PlusCircle,
@@ -29,6 +29,7 @@ import { EditTransactionModal } from "./EditTransactionModal";
 interface CartoesViewProps {
   cards: CardConfig[];
   cartoes: GastoCartao[];
+  selectedPeriod?: string;
   onAddGastoCartao: (
     gasto: Omit<GastoCartao, "id">,
     installmentDetails?: {
@@ -50,6 +51,7 @@ interface CartoesViewProps {
 export const CartoesView: React.FC<CartoesViewProps> = ({
   cards,
   cartoes,
+  selectedPeriod,
   onAddGastoCartao,
   onUpdateGastoCartao,
   onDeleteGastoCartao,
@@ -62,7 +64,30 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   const [selectedCard, setSelectedCard] = useState<string>(cards[0]?.id || "");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(getTodayISO(0));
+
+  const getInitialDate = () => {
+    if (selectedPeriod) {
+      const today = getTodayISO(0);
+      if (today.startsWith(selectedPeriod)) return today;
+      return `${selectedPeriod}-10`;
+    }
+    return getTodayISO(0);
+  };
+  const [date, setDate] = useState<string>(getInitialDate);
+
+  // Sync date when working month changes
+  useEffect(() => {
+    if (selectedPeriod && !date.startsWith(selectedPeriod)) {
+      const today = getTodayISO(0);
+      if (today.startsWith(selectedPeriod)) {
+        setDate(today);
+      } else {
+        const dayPart = date ? date.split("-")[2] || "10" : "10";
+        setDate(`${selectedPeriod}-${dayPart}`);
+      }
+    }
+  }, [selectedPeriod]);
+
   const [installmentCount, setInstallmentCount] = useState<number>(1);
   const [pricingMode, setPricingMode] = useState<"total" | "installment">("total");
   const [startInstallment, setStartInstallment] = useState<number>(1);
@@ -84,18 +109,6 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   const isRecurring = installmentCount === -1;
   const isInstallment = installmentCount > 1 && !isRecurring;
 
-  const selectedCardConfig = cards.find((c) => c.id === selectedCard) || cards[0];
-
-  const targetInvoiceMonth = useMemo(() => {
-    if (!selectedCardConfig || !date) return "";
-    return calculateInvoiceMonth(date, selectedCardConfig.closingDay);
-  }, [date, selectedCardConfig]);
-
-  const isShiftedToNextMonth = useMemo(() => {
-    if (!date || !targetInvoiceMonth) return false;
-    return targetInvoiceMonth !== date.slice(0, 7);
-  }, [date, targetInvoiceMonth]);
-
   const installmentAmount = useMemo(() => {
     if (numVal <= 0) return 0;
     if (!isInstallment) return numVal;
@@ -116,7 +129,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
 
   const previewEndMonth = useMemo(() => {
     if (!isInstallment || !date) return "";
-    const offsetMonths = installmentCount - 1 + (isShiftedToNextMonth ? 1 : 0);
+    const offsetMonths = installmentCount - 1;
     const finalDate = addMonthsToDate(date, offsetMonths);
     const parts = finalDate.split("-");
     if (parts.length >= 2) {
@@ -128,7 +141,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
       return `${monthNames[mIdx] || parts[1]}/${parts[0]}`;
     }
     return "";
-  }, [isInstallment, date, installmentCount, isShiftedToNextMonth]);
+  }, [isInstallment, date, installmentCount]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,7 +158,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
         card: selectedCard || cards[0]?.id || "Cartão",
         description: description.trim(),
         amount: Math.round(installmentAmount * 100) / 100,
-        date: date || getTodayISO(0),
+        date: date || (selectedPeriod ? `${selectedPeriod}-10` : getTodayISO(0)),
         installments: label,
         category,
         totalInstallments: isRecurring ? 1 : installmentCount,
@@ -157,7 +170,6 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
         startInstallment: isInstallment ? startInstallment : 1,
         installmentAmount: Math.round(installmentAmount * 100) / 100,
         totalAmount: Math.round(totalPurchaseAmount * 100) / 100,
-        closingDay: selectedCardConfig?.closingDay,
       }
     );
 
@@ -566,28 +578,13 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
               </div>
             )}
 
-            {isShiftedToNextMonth && (
-              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/40 text-[11px] text-amber-200 flex items-start gap-2">
-                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold text-amber-300">Fatura fechada!</span> A compra foi feita dia{" "}
-                  <strong>{date ? date.split("-")[2] : ""}</strong> após o fechamento do {selectedCardConfig?.name} (dia {selectedCardConfig?.closingDay}).
-                  Ela entrará automaticamente na fatura de <strong>{targetInvoiceMonth}</strong> (Vencimento dia {selectedCardConfig?.dueDay})!
-                </div>
-              </div>
-            )}
-
             <button
               type="submit"
               className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 font-bold text-white rounded-xl transition-all shadow-lg shadow-purple-600/20 active:scale-95 text-xs cursor-pointer flex items-center justify-center gap-1.5"
             >
               <PlusCircle className="w-4 h-4" />
               <span>
-                {isShiftedToNextMonth
-                  ? isInstallment
-                    ? `Lançar em ${installmentCount}x (Início em ${targetInvoiceMonth})`
-                    : `Lançar na Fatura de ${targetInvoiceMonth}`
-                  : isInstallment
+                {isInstallment
                   ? `Lançar Compra em ${installmentCount}x`
                   : "Lançar no Cartão"}
               </span>

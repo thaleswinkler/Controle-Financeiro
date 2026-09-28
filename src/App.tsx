@@ -213,15 +213,25 @@ export default function App() {
 
           // Filter out any cartoes matching deleted keys or signatures
           const filteredCartoes = (remoteData.cartoes || []).filter((c) => {
-            const sig = makeExpenseSignature(c.description, c.card, c.installments || "", selectedPeriod);
-            const genKey = makeGeneralExpenseKey(c.description, c.card, c.amount, selectedPeriod);
             return (
               !deletedKeys.has(c.id) &&
-              !deletedKeys.has(sig) &&
-              !deletedKeys.has(genKey) &&
               (!c.installmentSeriesId || !deletedKeys.has(`series_${c.installmentSeriesId}`))
             );
           });
+
+          // Also guarantee that projected installments for selectedPeriod from all known months are preserved!
+          const allExpenses = collectAllExpensesFromStorage();
+          const projectedMap = projectMissingInstallmentsFromExpenses(
+            allExpenses,
+            deletedKeys,
+            remoteData.cards || dataRef.current.cards
+          );
+          const projectedForThisMonth = projectedMap[selectedPeriod] || [];
+          const mergedCartoes = mergeProjectedInstallments(
+            filteredCartoes,
+            projectedForThisMonth,
+            deletedKeys
+          );
 
           // Ensure fixed expenses are present: if remote has none, inherit from current state
           const finalFixed =
@@ -237,7 +247,7 @@ export default function App() {
 
           const finalData: FinancialData = {
             ...remoteData,
-            cartoes: filteredCartoes,
+            cartoes: mergedCartoes,
             gastosFixos: finalFixed,
             cards:
               Array.isArray(remoteData.cards) && remoteData.cards.length > 0
@@ -589,7 +599,7 @@ export default function App() {
   };
 
   // --- Handlers for Credit Cards & Installments Across Future Months ---
-  const handleAddGastoCartao = (
+  const handleAddGastoCartao = async (
     newGasto: Omit<GastoCartao, "id">,
     installmentDetails?: {
       totalInstallments: number;
@@ -599,22 +609,20 @@ export default function App() {
       closingDay?: number;
     }
   ) => {
-    // 1. Identify card config and closing day
-    const cardConfig = data.cards.find((c) => c.id === newGasto.card || c.name === newGasto.card);
-    const closingDay = installmentDetails?.closingDay ?? cardConfig?.closingDay;
-
     const isMultiInstallment = installmentDetails && installmentDetails.totalInstallments > 1;
     const totalInst = isMultiInstallment ? installmentDetails.totalInstallments : 1;
     const startInst = installmentDetails?.startInstallment || 1;
     const instAmount = installmentDetails?.installmentAmount || newGasto.amount;
     const totalAmt = installmentDetails?.totalAmount || newGasto.amount;
 
-    // 2. Determine initial invoice month based on closing day
-    const purchaseDate = newGasto.date || getTodayISO(0);
-    const initialInvoiceMonth = calculateInvoiceMonth(purchaseDate, closingDay);
-    const isShiftedToNext = initialInvoiceMonth !== selectedPeriod;
+    // A compra entra SEMPRE no mês que o usuário estiver trabalhando (selectedPeriod)
+    let purchaseDate = newGasto.date || `${selectedPeriod}-10`;
+    if (!purchaseDate.startsWith(selectedPeriod)) {
+      const day = purchaseDate.split("-")[2] || "10";
+      purchaseDate = `${selectedPeriod}-${day}`;
+    }
 
-    // 3. Generate all installments accurately
+    // Gerar identificador único de série para vincular as parcelas
     const seriesId = "series_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
     const generated = generateInstallments({
       description: newGasto.description,
@@ -626,10 +634,9 @@ export default function App() {
       installmentAmount: instAmount,
       totalPurchaseAmount: totalAmt,
       seriesId,
-      closingDay,
     });
 
-    // Group installments by invoice month
+    // Agrupar parcelas por mês
     const byMonth: Record<string, GastoCartao[]> = {};
     for (const gen of generated) {
       if (!byMonth[gen.monthYear]) {
@@ -638,15 +645,15 @@ export default function App() {
       byMonth[gen.monthYear].push(gen.item);
     }
 
-    // 4. Update current active state ONLY if this month is the target for any installment
+    // 1. Atualizar o estado do mês ativo de trabalho (selectedPeriod) imediatamente
     const currentMonthItems = byMonth[selectedPeriod] || [];
     if (currentMonthItems.length > 0) {
       saveState({ ...data, cartoes: [...currentMonthItems, ...data.cartoes] });
     }
 
-    // 5. Propagate into LocalStorage for all target months
+    // 2. Gravar parcelas dos meses futuros no LocalStorage
     for (const [mYear, items] of Object.entries(byMonth)) {
-      if (mYear === selectedPeriod && currentMonthItems.length > 0) continue; // Already saved above
+      if (mYear === selectedPeriod && currentMonthItems.length > 0) continue; // Já salvo acima
       try {
         const raw = localStorage.getItem(`fin_iq_month_${mYear}`);
         let mData: FinancialData;
@@ -665,23 +672,17 @@ export default function App() {
       }
     }
 
-    // 6. Propagate into Firestore across months if cloud is active
+    // 3. Propagar para a nuvem Firebase nos meses afetados
     if (currentUser) {
-      addInstallmentsToCloud(currentUser.uid, byMonth, data).catch(console.error);
+      await addInstallmentsToCloud(currentUser.uid, byMonth, data);
     }
 
-    // 7. Clear, user-friendly feedback
-    if (isShiftedToNext) {
-      addToast(
-        "info",
-        `Compra agendada para ${initialInvoiceMonth}!`,
-        `Como a compra foi feita após o fechamento do cartão (dia ${closingDay}), ela entrará na fatura de ${initialInvoiceMonth}.`
-      );
-    } else if (isMultiInstallment) {
+    // 4. Feedback claro para o usuário
+    if (isMultiInstallment) {
       addToast(
         "success",
-        `Compra parcelada em ${totalInst}x`,
-        `${totalInst} parcelas programadas automaticamente nos meses seguintes!`
+        `Compra parcelada em ${totalInst}x adicionada!`,
+        `1ª parcela lançada em ${selectedPeriod} e as demais parcelas agendadas nos meses seguintes.`
       );
     } else {
       addToast("success", "Compra no cartão lançada", `${newGasto.description} no ${newGasto.card}.`);
@@ -699,21 +700,14 @@ export default function App() {
     if (!targetItem) return;
 
     const seriesId = targetItem.installmentSeriesId;
-    const safeDesc = targetItem.description.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
-    const safeCard = (targetItem.card || "card").toLowerCase();
 
-    // Prepare tombstone keys to guarantee deleted items NEVER return upon reload or projection
-    const keysToTombstone = [
-      targetItem.id,
-      makeExpenseSignature(targetItem.description, targetItem.card, targetItem.installments || "", selectedPeriod),
-      makeGeneralExpenseKey(targetItem.description, targetItem.card, targetItem.amount, selectedPeriod),
-    ];
+    // Apenas tombstonar o ID específico e a série específica (sem bloquear futuras compras com nomes parecidos)
+    const keysToTombstone = [targetItem.id];
 
     if (deleteSeries && (seriesId || targetItem.installments?.includes("/"))) {
       if (seriesId) {
         keysToTombstone.push(`series_${seriesId}`);
       }
-      keysToTombstone.push(`series_${safeDesc}_${safeCard}`);
 
       // Record deletions locally and in cloud
       recordDeletedExpenseKeys(keysToTombstone, currentUser?.uid);
@@ -761,7 +755,7 @@ export default function App() {
         "Todas as parcelas desta compra foram excluídas e não voltarão mais."
       );
     } else {
-      // Delete single item (and permanently tombstone it for this month)
+      // Delete single item
       recordDeletedExpenseKeys(keysToTombstone, currentUser?.uid);
       saveState({ ...data, cartoes: data.cartoes.filter((c) => c.id !== id) });
       addToast("info", "Lançamento removido deste mês.");
@@ -1118,6 +1112,7 @@ export default function App() {
           <CartoesView
             cards={data.cards}
             cartoes={data.cartoes}
+            selectedPeriod={selectedPeriod}
             onAddGastoCartao={handleAddGastoCartao}
             onUpdateGastoCartao={handleUpdateGastoCartao}
             onDeleteGastoCartao={handleDeleteGastoCartao}

@@ -52,25 +52,15 @@ export function getDefaultReferenceMonth(): string {
 }
 
 /**
- * Calculates the credit card invoice month (YYYY-MM).
- * In Brazilian credit card rules:
- * If the purchase day is on or after the card's closingDay (dia de fechamento / melhor dia de compra),
- * the current invoice is closed and the purchase automatically enters NEXT month's invoice!
+ * Calculates the invoice month (YYYY-MM).
+ * Simply returns the calendar month of the purchase date without shifting.
  */
 export function calculateInvoiceMonth(
   purchaseDate: string,
-  closingDay?: number
+  _closingDay?: number
 ): string {
   if (!purchaseDate) return "";
-  const parts = purchaseDate.split("-");
-  if (parts.length < 3) return purchaseDate.slice(0, 7);
-  const day = parseInt(parts[2], 10);
-
-  // If purchase day >= closingDay, invoice has closed for this month, belongs to next month!
-  if (closingDay && closingDay > 0 && day >= closingDay) {
-    return addMonthsToDate(purchaseDate, 1).slice(0, 7);
-  }
-  return `${parts[0]}-${parts[1]}`;
+  return getMonthYearFromDate(purchaseDate);
 }
 
 export interface GeneratedInstallment {
@@ -92,11 +82,10 @@ export interface InstallmentGenerationParams {
 }
 
 /**
- * Generates an array of installments across months starting from `startDate`
- * (or from the specified `startInstallment`), accurately honoring the credit card closing day.
- * If purchase day >= closingDay:
- *   - The 1st installment starts in NEXT month!
- *   - Subsequent installments follow month by month.
+ * Generates an array of installments across months starting from `startDate`.
+ * - Parcela 1 entra no mês em que o usuário está trabalhando (mês da compra).
+ * - Parcela 2 entra no mês seguinte (+1).
+ * - Parcela 3 entra no mês posterior (+2), e assim sucessivamente.
  */
 export function generateInstallments(
   params: InstallmentGenerationParams
@@ -111,25 +100,20 @@ export function generateInstallments(
     installmentAmount,
     totalPurchaseAmount,
     seriesId = "series_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
-    closingDay,
   } = params;
 
-  // Determine initial invoice month based on closing day
-  const initialInvoiceMonth = calculateInvoiceMonth(startDate, closingDay);
-  const calendarMonth = getMonthYearFromDate(startDate);
-  const isPostClosing = initialInvoiceMonth !== calendarMonth;
+  const baseMonth = getMonthYearFromDate(startDate);
 
   if (totalInstallments <= 1) {
-    const itemDate = isPostClosing ? addMonthsToDate(startDate, 1) : startDate;
     return [
       {
-        monthYear: initialInvoiceMonth,
+        monthYear: baseMonth,
         item: {
           id: "card_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
           card,
           description,
           amount: Math.round((totalPurchaseAmount || installmentAmount) * 100) / 100,
-          date: itemDate,
+          date: startDate,
           installments: "À vista",
           category,
           installmentSeriesId: seriesId,
@@ -144,8 +128,8 @@ export function generateInstallments(
   const results: GeneratedInstallment[] = [];
 
   for (let inst = startInstallment; inst <= totalInstallments; inst++) {
-    // If purchase was made after closing day, the 1st installment starts in +1 month
-    const offsetMonths = inst - startInstallment + (isPostClosing ? 1 : 0);
+    // Parcela 1 fica no mês de startDate; as seguintes avançam mês a mês
+    const offsetMonths = inst - startInstallment;
     const installmentDate = addMonthsToDate(startDate, offsetMonths);
     const monthYear = getMonthYearFromDate(installmentDate);
 
@@ -290,7 +274,7 @@ export function makeGeneralExpenseKey(
 export function projectMissingInstallmentsFromExpenses(
   expenses: GastoCartao[],
   deletedKeys?: Set<string>,
-  cardsConfig?: CardConfig[]
+  _cardsConfig?: CardConfig[]
 ): Record<string, GastoCartao[]> {
   const projectedByMonth: Record<string, GastoCartao[]> = {};
   const processedSeries = new Set<string>();
@@ -317,37 +301,31 @@ export function projectMissingInstallmentsFromExpenses(
     processedSeries.add(seriesKey);
 
     const totalAmt = item.totalPurchaseAmount || item.amount * total;
-    const cardConfig = cardsConfig?.find((c) => c.id === item.card || c.name === item.card);
-    const closingDay = cardConfig?.closingDay;
 
-    // Determine the base invoice month of installment 1
-    // If the item itself is installment `current`, find where installment 1 was
+    // Determine the base month where installment 1 entered
     const itemMonth = item.date ? item.date.slice(0, 7) : "";
+    if (!itemMonth) continue;
     const baseInvoiceMonth = addMonthsToDate(itemMonth + "-01", -(current - 1)).slice(0, 7);
 
-    for (let inst = current + 1; inst <= total; inst++) {
+    for (let inst = 1; inst <= total; inst++) {
       const offsetFromBase = inst - 1;
       const targetMonthYear = addMonthsToDate(baseInvoiceMonth + "-01", offsetFromBase).slice(0, 7);
       const instLabel = `${inst}/${total}`;
 
-      // Pick a representative date in the target month (e.g. same day of original purchase)
+      // Day of purchase in target month
       const dayPart = item.date && item.date.split("-")[2] ? item.date.split("-")[2] : "10";
       const targetDate = `${targetMonthYear}-${dayPart}`;
 
-      // Check if user previously deleted this specific installment or the series
-      const signature = makeExpenseSignature(item.description, item.card, instLabel, targetMonthYear);
-      const generalKey = makeGeneralExpenseKey(item.description, item.card, item.amount, targetMonthYear);
       const instId = `card_${seriesId}_inst_${inst}`;
 
+      // Respect user's explicit deletion of this item or series
       if (deletedKeys) {
         if (
           deletedKeys.has(instId) ||
-          deletedKeys.has(signature) ||
-          deletedKeys.has(generalKey) ||
-          deletedKeys.has(`series_${seriesId}`) ||
-          deletedKeys.has(`series_${safeDesc}_${safeCard}`)
+          (item.installmentSeriesId && deletedKeys.has(`series_${item.installmentSeriesId}`)) ||
+          deletedKeys.has(`series_${seriesId}`)
         ) {
-          continue; // Respect user deletion!
+          continue;
         }
       }
 
@@ -426,19 +404,10 @@ export function mergeProjectedInstallments(
   const result = [...existingCartoes];
 
   for (const item of projected) {
-    // Check if deleted
+    // Check if explicitly deleted by user
     if (deletedKeys) {
-      const sig = makeExpenseItemSignature(item);
-      const genKey = makeGeneralExpenseKey(
-        item.description,
-        item.card,
-        item.amount,
-        item.date ? item.date.slice(0, 7) : ""
-      );
       if (
         deletedKeys.has(item.id) ||
-        deletedKeys.has(sig) ||
-        deletedKeys.has(genKey) ||
         (item.installmentSeriesId && deletedKeys.has(`series_${item.installmentSeriesId}`))
       ) {
         continue;
@@ -450,11 +419,7 @@ export function mergeProjectedInstallments(
         c.id === item.id ||
         (c.description.trim().toLowerCase() === item.description.trim().toLowerCase() &&
           c.card === item.card &&
-          (c.installments === item.installments ||
-            (c.currentInstallment === item.currentInstallment &&
-              c.totalInstallments === item.totalInstallments &&
-              item.totalInstallments &&
-              item.totalInstallments > 1)))
+          c.installments === item.installments)
     );
 
     if (!alreadyExists) {
