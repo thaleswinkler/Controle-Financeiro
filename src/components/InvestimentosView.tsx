@@ -1,5 +1,16 @@
 import React, { useState } from "react";
-import { PlusCircle, Trash2, Edit3, PiggyBank, Target, TrendingUp, PieChart } from "lucide-react";
+import {
+  PlusCircle,
+  Trash2,
+  Edit3,
+  PiggyBank,
+  Target,
+  TrendingUp,
+  PieChart,
+  CopyPlus,
+  Check,
+  X,
+} from "lucide-react";
 import { Investimento } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
 import { EditTransactionModal } from "./EditTransactionModal";
@@ -10,6 +21,7 @@ interface InvestimentosViewProps {
   onAddInvestimento: (inv: Omit<Investimento, "id">) => void;
   onUpdateInvestimento: (inv: Investimento) => void;
   onDeleteInvestimento: (id: string) => void;
+  onReplicateInvestimentos?: () => void;
 }
 
 export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
@@ -18,12 +30,30 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
   onAddInvestimento,
   onUpdateInvestimento,
   onDeleteInvestimento,
+  onReplicateInvestimentos,
 }) => {
   const [description, setDescription] = useState("");
   const [type, setType] = useState<Investimento["type"]>("Renda Fixa");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(getTodayISO(0));
   const [editingInvestimento, setEditingInvestimento] = useState<Investimento | null>(null);
+
+  // Quick inline edit of amount
+  const [inlineEditingId, setInlineEditingId] = useState<string | null>(null);
+  const [inlineAmount, setInlineAmount] = useState("");
+
+  const startInlineEdit = (item: Investimento) => {
+    setInlineEditingId(item.id);
+    setInlineAmount(item.amount.toString());
+  };
+
+  const handleInlineSave = (item: Investimento) => {
+    const val = parseFloat(inlineAmount.replace(",", "."));
+    if (!isNaN(val) && val > 0) {
+      onUpdateInvestimento({ ...item, amount: val });
+    }
+    setInlineEditingId(null);
+  };
 
   const totalAportado = investimentos.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
   const taxaPoupanca = totalReceita > 0 ? (totalAportado / totalReceita) * 100 : 0;
@@ -183,19 +213,34 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
 
         {/* Table & Breakdown */}
         <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 shadow-xl lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-cyan-400" />
                 <span>Extrato de Aportes Mensais</span>
               </h3>
-              <p className="text-[11px] text-slate-400">Alocação de capital e construção de patrimônio</p>
+              <p className="text-[11px] text-slate-400">
+                Alocação de capital e construção de patrimônio
+              </p>
             </div>
-            <div className="text-right">
-              <span className="text-[10px] text-slate-400 block uppercase font-bold">Subtotal Aportes</span>
-              <span className="text-base font-extrabold text-cyan-400 bg-cyan-500/10 px-3 py-1 rounded-xl border border-cyan-500/20 inline-block font-mono">
-                {formatBRL(totalAportado)}
-              </span>
+            <div className="flex items-center gap-3">
+              {onReplicateInvestimentos && (
+                <button
+                  type="button"
+                  onClick={onReplicateInvestimentos}
+                  title="Replicar os investimentos feitos anteriormente para este mês"
+                  className="px-2.5 py-1.5 rounded-xl border border-cyan-500/30 hover:border-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 text-[11px] font-semibold text-cyan-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <CopyPlus className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Replicar Mês Anterior</span>
+                </button>
+              )}
+              <div className="text-right">
+                <span className="text-[10px] text-slate-400 block uppercase font-bold">Subtotal Aportes</span>
+                <span className="text-base font-extrabold text-cyan-400 bg-cyan-500/10 px-3 py-1 rounded-xl border border-cyan-500/20 inline-block font-mono">
+                  {formatBRL(totalAportado)}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -224,7 +269,9 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                   <th className="py-3 px-4 font-semibold">Ativo / Descrição</th>
                   <th className="py-3 px-4 font-semibold">Classe</th>
                   <th className="py-3 px-4 font-semibold">Data</th>
-                  <th className="py-3 px-4 text-right font-semibold">Valor Aportado</th>
+                  <th className="py-3 px-4 text-right font-semibold">
+                    Valor Aportado <span className="normal-case font-normal text-slate-500 text-[10px]">(clique p/ alterar)</span>
+                  </th>
                   <th className="py-3 px-4 text-center font-semibold">Ações</th>
                 </tr>
               </thead>
@@ -233,6 +280,17 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                   <tr>
                     <td colSpan={5} className="py-8 text-center text-slate-500">
                       Nenhum aporte registrado para este mês ainda.
+                      {onReplicateInvestimentos && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={onReplicateInvestimentos}
+                            className="text-xs text-cyan-400 hover:text-cyan-300 font-semibold underline cursor-pointer"
+                          >
+                            Clique aqui para replicar os investimentos do mês anterior
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ) : (
@@ -249,15 +307,57 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4 text-slate-400">{formatDateBR(i.date)}</td>
-                      <td className="py-3 px-4 text-right font-bold text-cyan-300 font-mono">
-                        {formatBRL(i.amount)}
+                      <td className="py-3 px-4 text-right">
+                        {inlineEditingId === i.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={inlineAmount}
+                              onChange={(e) => setInlineAmount(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleInlineSave(i);
+                                if (e.key === "Escape") setInlineEditingId(null);
+                              }}
+                              className="w-28 bg-slate-900 border border-cyan-400 text-white font-mono text-xs rounded px-2 py-1 text-right focus:outline-none shadow-inner"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleInlineSave(i)}
+                              className="text-emerald-400 hover:text-emerald-300 p-1 hover:bg-emerald-500/20 rounded"
+                              title="Salvar valor"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setInlineEditingId(null)}
+                              className="text-slate-400 hover:text-rose-400 p-1 hover:bg-rose-500/20 rounded"
+                              title="Cancelar"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => startInlineEdit(i)}
+                            className="inline-flex items-center gap-1.5 cursor-pointer group/val justify-end py-1 px-2 rounded hover:bg-slate-800/80 transition-colors"
+                            title="Clique para alterar o valor do investimento"
+                          >
+                            <span className="font-bold text-cyan-300 font-mono text-xs group-hover/val:text-cyan-200">
+                              {formatBRL(i.amount)}
+                            </span>
+                            <Edit3 className="w-3 h-3 text-slate-500 opacity-60 group-hover/val:opacity-100 transition-opacity text-cyan-400" />
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button
                             onClick={() => setEditingInvestimento(i)}
                             className="text-slate-400 hover:text-cyan-300 p-1 rounded-md hover:bg-slate-800 transition-colors"
-                            title="Editar aporte"
+                            title="Editar aporte completo"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>

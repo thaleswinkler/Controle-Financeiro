@@ -6,7 +6,6 @@ import {
   CreditCard,
   PiggyBank,
   AlertOctagon,
-  Landmark,
 } from "lucide-react";
 import { TabType, FinancialMetrics } from "../types";
 
@@ -52,7 +51,7 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
     },
     {
       id: "investimentos",
-      label: "Investimentos",
+      label: "Patrimônio & Investimentos",
       icon: <PiggyBank className="w-4 h-4 text-cyan-400" />,
       badge: metrics.savingsRate > 0 ? `${metrics.savingsRate.toFixed(0)}%` : null,
       badgeColor: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30",
@@ -63,11 +62,6 @@ export const NavigationTabs: React.FC<NavigationTabsProps> = ({
       icon: <AlertOctagon className="w-4 h-4 text-rose-400" />,
       badge: metrics.totalImprevistos > 0 ? "Alerta" : null,
       badgeColor: "bg-rose-500/20 text-rose-300 border-rose-500/30",
-    },
-    {
-      id: "riqueza",
-      label: "Campo de Riqueza",
-      icon: <Landmark className="w-4 h-4 text-amber-400" />,
     },
   ];
 

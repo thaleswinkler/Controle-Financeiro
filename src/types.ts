@@ -118,5 +118,4 @@ export type TabType =
   | "gastos-fixos"
   | "cartoes"
   | "investimentos"
-  | "imprevistos"
-  | "riqueza";
+  | "imprevistos";

@@ -34,7 +34,6 @@ import { GastosFixosView } from "./components/GastosFixosView";
 import { CartoesView } from "./components/CartoesView";
 import { InvestimentosView } from "./components/InvestimentosView";
 import { ImprevistosView } from "./components/ImprevistosView";
-import { CampoRiquezaView } from "./components/CampoRiquezaView";
 import { WhatsAppModal } from "./components/WhatsAppModal";
 import { AiAdvisorModal } from "./components/AiAdvisorModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";

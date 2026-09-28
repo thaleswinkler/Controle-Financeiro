@@ -34,6 +34,7 @@ interface HeaderProps {
   onImportJSON: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onResetData: () => void;
   onReplicateFixedExpenses: () => void;
+  onReplicateInvestments?: () => void;
   selectedPeriod: string;
   onSelectPeriod: (period: string) => void;
 }
@@ -50,6 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
   onImportJSON,
   onResetData,
   onReplicateFixedExpenses,
+  onReplicateInvestments,
   selectedPeriod,
   onSelectPeriod,
 }) => {
@@ -289,6 +291,19 @@ export const Header: React.FC<HeaderProps> = ({
                   <CopyPlus className="w-4 h-4 text-indigo-400" />
                   <span>Replicar Fixos para Próx. Mês</span>
                 </button>
+
+                {onReplicateInvestments && (
+                  <button
+                    onClick={() => {
+                      onReplicateInvestments();
+                      setDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 text-cyan-300 hover:text-cyan-200 transition-colors"
+                  >
+                    <CopyPlus className="w-4 h-4 text-cyan-400" />
+                    <span>Replicar Investimentos Anteriores</span>
+                  </button>
+                )}
 
                 <hr className="border-slate-800 my-1" />
 
