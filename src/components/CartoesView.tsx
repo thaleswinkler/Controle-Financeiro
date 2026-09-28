@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   CreditCard,
   PlusCircle,
@@ -7,18 +7,32 @@ import {
   Layers,
   Plus,
   Settings,
+  Calendar,
+  AlertCircle,
+  HelpCircle,
+  CheckCircle2,
+  Info,
 } from "lucide-react";
 import { CardConfig, GastoCartao } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
+import { addMonthsToDate, getMonthYearFromDate, INSTALLMENT_COUNT_OPTIONS } from "../utils/installments";
 import { CardModal } from "./CardModal";
 import { EditTransactionModal } from "./EditTransactionModal";
 
 interface CartoesViewProps {
   cards: CardConfig[];
   cartoes: GastoCartao[];
-  onAddGastoCartao: (gasto: Omit<GastoCartao, "id">) => void;
+  onAddGastoCartao: (
+    gasto: Omit<GastoCartao, "id">,
+    installmentDetails?: {
+      totalInstallments: number;
+      startInstallment: number;
+      installmentAmount: number;
+      totalAmount: number;
+    }
+  ) => void;
   onUpdateGastoCartao: (gasto: GastoCartao) => void;
-  onDeleteGastoCartao: (id: string) => void;
+  onDeleteGastoCartao: (id: string, deleteSeries?: boolean) => void;
   onSaveCard: (card: CardConfig) => void;
   onDeleteCard: (cardId: string) => void;
 }
@@ -37,35 +51,97 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(getTodayISO(0));
-  const [installments, setInstallments] = useState("À vista");
+  const [installmentCount, setInstallmentCount] = useState<number>(1);
+  const [pricingMode, setPricingMode] = useState<"total" | "installment">("total");
+  const [startInstallment, setStartInstallment] = useState<number>(1);
   const [category, setCategory] = useState("Alimentação");
 
-  // Modals
+  // Modals & confirmation dialogs
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [cardToEdit, setCardToEdit] = useState<CardConfig | null>(null);
   const [editingExpense, setEditingExpense] = useState<GastoCartao | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<GastoCartao | null>(null);
 
   const filteredExpenses =
     activeCardFilter === "TODOS"
       ? cartoes
       : cartoes.filter((c) => c.card === activeCardFilter);
 
+  // Calculations for installments preview
+  const numVal = parseFloat(amount.replace(",", ".")) || 0;
+  const isRecurring = installmentCount === -1;
+  const isInstallment = installmentCount > 1 && !isRecurring;
+
+  const installmentAmount = useMemo(() => {
+    if (numVal <= 0) return 0;
+    if (!isInstallment) return numVal;
+    if (pricingMode === "total") {
+      return numVal / installmentCount;
+    }
+    return numVal;
+  }, [numVal, isInstallment, pricingMode, installmentCount]);
+
+  const totalPurchaseAmount = useMemo(() => {
+    if (numVal <= 0) return 0;
+    if (!isInstallment) return numVal;
+    if (pricingMode === "total") {
+      return numVal;
+    }
+    return numVal * installmentCount;
+  }, [numVal, isInstallment, pricingMode, installmentCount]);
+
+  const previewEndMonth = useMemo(() => {
+    if (!isInstallment || !date) return "";
+    const offsetMonths = installmentCount - 1;
+    const finalDate = addMonthsToDate(date, offsetMonths);
+    const parts = finalDate.split("-");
+    if (parts.length >= 2) {
+      const monthNames = [
+        "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+        "Jul", "Ago", "Set", "Out", "Nov", "Dez"
+      ];
+      const mIdx = parseInt(parts[1], 10) - 1;
+      return `${monthNames[mIdx] || parts[1]}/${parts[0]}`;
+    }
+    return "";
+  }, [isInstallment, date, installmentCount]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(amount.replace(",", "."));
-    if (!description.trim() || isNaN(val) || val <= 0) return;
+    if (!description.trim() || numVal <= 0) return;
 
-    onAddGastoCartao({
-      card: selectedCard || cards[0]?.id || "Cartão",
-      description: description.trim(),
-      amount: val,
-      date: date || getTodayISO(0),
-      installments,
-      category,
-    });
+    const label = isRecurring
+      ? "Recorrente"
+      : installmentCount === 1
+      ? "À vista"
+      : `${startInstallment}/${installmentCount}`;
+
+    onAddGastoCartao(
+      {
+        card: selectedCard || cards[0]?.id || "Cartão",
+        description: description.trim(),
+        amount: Math.round(installmentAmount * 100) / 100,
+        date: date || getTodayISO(0),
+        installments: label,
+        category,
+        totalInstallments: isRecurring ? 1 : installmentCount,
+        currentInstallment: startInstallment,
+        totalPurchaseAmount: Math.round(totalPurchaseAmount * 100) / 100,
+      },
+      isInstallment
+        ? {
+            totalInstallments: installmentCount,
+            startInstallment,
+            installmentAmount: Math.round(installmentAmount * 100) / 100,
+            totalAmount: Math.round(totalPurchaseAmount * 100) / 100,
+          }
+        : undefined
+    );
 
     setDescription("");
     setAmount("");
+    setInstallmentCount(1);
+    setStartInstallment(1);
   };
 
   const getCardTotals = (cardId: string) => {
@@ -78,6 +154,19 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
     const found = cards.find((c) => c.id === cardId);
     if (!found) return { name: cardId, color: "#94a3b8" };
     return { name: found.name, color: found.accentColor };
+  };
+
+  const handleDeleteClick = (expense: GastoCartao) => {
+    // If expense belongs to an installment series or has format X/Y, ask the user
+    const hasMultiple =
+      Boolean(expense.installmentSeriesId) ||
+      (Boolean(expense.installments) && /\d+\/\d+/.test(expense.installments || ""));
+
+    if (hasMultiple) {
+      setItemToDelete(expense);
+    } else {
+      onDeleteGastoCartao(expense.id, false);
+    }
   };
 
   return (
@@ -158,65 +247,72 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                       {c.name}
                     </span>
                     <button
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={() => {
                         setCardToEdit(c);
                         setIsCardModalOpen(true);
                       }}
-                      className="p-1 text-slate-400 hover:text-purple-300 hover:bg-purple-500/10 rounded-md transition-colors"
-                      title="Editar datas de vencimento, fechamento e limite"
+                      className="text-slate-400 hover:text-purple-400 transition-colors cursor-pointer"
+                      title="Configurar limites e datas"
                     >
-                      <Edit3 className="w-3 h-3" />
+                      <Edit3 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                   <span className="text-[10px] text-slate-400 truncate block">
-                    {c.bankName || c.name}
+                    {c.bankName}
                   </span>
                 </div>
                 <div
-                  className="w-8 h-8 rounded-xl flex items-center justify-center border shrink-0"
-                  style={{
-                    backgroundColor: `${c.accentColor}15`,
-                    borderColor: `${c.accentColor}30`,
-                    color: c.accentColor,
-                  }}
+                  className="w-8 h-6 rounded-md flex items-center justify-center opacity-80"
+                  style={{ backgroundColor: `${c.accentColor}25` }}
                 >
-                  <CreditCard className="w-4 h-4" />
+                  <CreditCard className="w-4 h-4" style={{ color: c.accentColor }} />
                 </div>
               </div>
 
-              <div className="mt-3">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">
+              <div className="my-3">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block mb-0.5">
                   Fatura Atual
                 </span>
-                <p className="text-2xl font-black text-white font-mono">{formatBRL(spent)}</p>
+                <span className="text-xl font-black text-white font-mono">
+                  {formatBRL(spent)}
+                </span>
               </div>
 
               {/* Progress bar */}
-              <div className="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+              <div className="w-full bg-slate-800/80 rounded-full h-1.5 overflow-hidden mb-2">
                 <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${pct}%`,
-                    backgroundColor: isDanger
-                      ? "#f43f5e"
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    isDanger
+                      ? "bg-rose-500"
                       : isWarning
-                      ? "#f59e0b"
-                      : c.accentColor,
-                  }}
+                      ? "bg-amber-400"
+                      : "bg-gradient-to-r from-purple-500 to-indigo-500"
+                  }`}
+                  style={{ width: `${pct}%` }}
                 />
               </div>
 
-              <div className="text-[11px] text-slate-400 mt-2 flex justify-between items-center">
+              <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
                 <span>Disponível: {formatBRL(available)}</span>
-                <span className={isDanger ? "text-rose-400 font-bold" : isWarning ? "text-amber-400" : ""}>
+                <span
+                  className={
+                    isDanger
+                      ? "text-rose-400 font-bold"
+                      : isWarning
+                      ? "text-amber-400"
+                      : "text-slate-500"
+                  }
+                >
                   {pct}% do limite
                 </span>
               </div>
 
-              <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
-                <span className="text-slate-400">Fecha dia {c.closingDay}</span>
-                <span className="text-purple-300 font-bold bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
+              {/* Dates indicator badge */}
+              <div className="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-between text-[10px]">
+                <span className="text-slate-400">
+                  Fecha dia <strong className="text-slate-200">{c.closingDay}</strong>
+                </span>
+                <span className="text-purple-300 font-semibold px-2 py-0.5 rounded-md bg-purple-950/60 border border-purple-800/40">
                   Vence dia {c.dueDay}
                 </span>
               </div>
@@ -224,27 +320,24 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
           );
         })}
 
-        {/* Add Card Prompt Card */}
-        <button
-          type="button"
+        {/* Quick Add Card Shortcut Card */}
+        <div
           onClick={() => {
             setCardToEdit(null);
             setIsCardModalOpen(true);
           }}
-          className="border-2 border-dashed border-slate-800 hover:border-purple-500/50 hover:bg-slate-900/40 rounded-2xl p-5 flex flex-col items-center justify-center text-center gap-2 transition-all group cursor-pointer min-h-[160px]"
+          className="border-2 border-dashed border-slate-800 hover:border-purple-500/50 rounded-2xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-all group bg-slate-900/30 hover:bg-slate-900/50 min-h-[160px]"
         >
-          <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 group-hover:scale-110 transition-transform">
+          <div className="w-10 h-10 rounded-2xl bg-purple-500/10 text-purple-400 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
             <Plus className="w-5 h-5" />
           </div>
-          <div>
-            <span className="text-xs font-bold text-white block group-hover:text-purple-300 transition-colors">
-              Adicionar Novo Cartão
-            </span>
-            <span className="text-[11px] text-slate-500">
-              Personalize nome, limite e dia de vencimento
-            </span>
-          </div>
-        </button>
+          <span className="text-xs font-bold text-slate-300 group-hover:text-purple-300">
+            Adicionar Novo Cartão
+          </span>
+          <p className="text-[11px] text-slate-500 mt-1 max-w-[180px]">
+            Personalize nome, limite e dia de vencimento
+          </p>
+        </div>
       </div>
 
       {/* Form & Table */}
@@ -257,7 +350,9 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Nova Compra no Cartão</h3>
-              <p className="text-[11px] text-slate-400">Lance gastos no cartão com parcelamento</p>
+              <p className="text-[11px] text-slate-400">
+                Lance gastos à vista ou parcelados (1x a 12x+)
+              </p>
             </div>
           </div>
 
@@ -274,7 +369,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                       setIsCardModalOpen(true);
                     }
                   }}
-                  className="text-[11px] text-purple-400 hover:underline flex items-center gap-1"
+                  className="text-[11px] text-purple-400 hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   <Settings className="w-3 h-3" />
                   <span>Ajustar vencimento</span>
@@ -283,7 +378,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
               <select
                 value={selectedCard}
                 onChange={(e) => setSelectedCard(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-purple-500 focus:outline-none"
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-purple-500 focus:outline-none cursor-pointer"
               >
                 {cards.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -294,20 +389,22 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-400 font-medium mb-1">Descrição</label>
+              <label className="block text-slate-400 font-medium mb-1">Descrição da Compra</label>
               <input
                 type="text"
                 required
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Ex: Supermercado, Restaurante, Combustível"
+                placeholder="Ex: Celular, Geladeira, Supermercado"
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white placeholder-slate-500 focus:border-purple-500 focus:outline-none"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-slate-400 font-medium mb-1">Valor (R$)</label>
+                <label className="block text-slate-400 font-medium mb-1">
+                  {isInstallment && pricingMode === "installment" ? "Valor da Parcela (R$)" : "Valor (R$)"}
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -331,52 +428,112 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
               </div>
             </div>
 
+            {/* Installments Selector - Complete 1x through 12x, 18x, 24x */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-slate-400 font-medium mb-1">Parcelamento</label>
                 <select
-                  value={installments}
-                  onChange={(e) => setInstallments(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-purple-500 focus:outline-none"
+                  value={installmentCount}
+                  onChange={(e) => setInstallmentCount(Number(e.target.value))}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-purple-500 focus:outline-none cursor-pointer"
                 >
-                  <option value="À vista">À vista (1x)</option>
-                  <option value="1/2">Parcela 1/2</option>
-                  <option value="1/3">Parcela 1/3</option>
-                  <option value="1/4">Parcela 1/4</option>
-                  <option value="1/5">Parcela 1/5</option>
-                  <option value="1/6">Parcela 1/6</option>
-                  <option value="1/10">Parcela 1/10</option>
-                  <option value="1/12">Parcela 1/12</option>
-                  <option value="Recorrente">Assinatura Mensal</option>
+                  {INSTALLMENT_COUNT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                  <option value={-1}>Assinatura Recorrente</option>
                 </select>
               </div>
+
               <div>
                 <label className="block text-slate-400 font-medium mb-1">Categoria</label>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-purple-500 focus:outline-none"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-purple-500 focus:outline-none cursor-pointer"
                 >
                   <option value="Alimentação">Alimentação / Mercado</option>
                   <option value="Transporte">Transporte / Uber / Gasolina</option>
                   <option value="Lazer">Lazer / Restaurantes</option>
-                  <option value="Compras">Compras Pessoais</option>
-                  <option value="Educação">Educação / Livros</option>
+                  <option value="Compras">Compras Pessoais / Eletro</option>
+                  <option value="Saúde">Saúde / Farmácia</option>
+                  <option value="Educação">Educação / Cursos</option>
+                  <option value="Moradia">Moradia / Casa</option>
                   <option value="Outros">Outros</option>
                 </select>
               </div>
             </div>
 
+            {/* Installment Options Toggle (Total vs Per Installment) */}
+            {isInstallment && (
+              <div className="p-3 rounded-xl bg-purple-950/30 border border-purple-800/40 space-y-2.5">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="text-slate-300 font-semibold">O valor digitado é:</span>
+                  <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setPricingMode("total")}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                        pricingMode === "total"
+                          ? "bg-purple-600 text-white"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Valor Total
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPricingMode("installment")}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                        pricingMode === "installment"
+                          ? "bg-purple-600 text-white"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Por Parcela
+                    </button>
+                  </div>
+                </div>
+
+                {/* Dynamic Summary Preview */}
+                {numVal > 0 && (
+                  <div className="text-[11px] text-purple-200 pt-1 border-t border-purple-800/30">
+                    <div className="flex items-center justify-between font-bold">
+                      <span>Plano:</span>
+                      <span className="text-emerald-400 font-mono">
+                        {installmentCount}x de {formatBRL(installmentAmount)}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                      Total: <strong className="text-white">{formatBRL(totalPurchaseAmount)}</strong>.
+                      As parcelas 1 a {installmentCount} serão agendadas e lançadas automaticamente de{" "}
+                      <span className="text-purple-300 font-semibold">
+                        {date.split("-").slice(0, 2).reverse().join("/")}
+                      </span>{" "}
+                      até{" "}
+                      <span className="text-purple-300 font-semibold">{previewEndMonth}</span>!
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 font-bold text-white rounded-xl transition-all shadow-lg shadow-purple-600/20 active:scale-95 text-xs cursor-pointer"
+              className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 font-bold text-white rounded-xl transition-all shadow-lg shadow-purple-600/20 active:scale-95 text-xs cursor-pointer flex items-center justify-center gap-1.5"
             >
-              Lançar no Cartão
+              <PlusCircle className="w-4 h-4" />
+              <span>
+                {isInstallment
+                  ? `Lançar Compra em ${installmentCount}x`
+                  : "Lançar no Cartão"}
+              </span>
             </button>
           </form>
         </div>
 
-        {/* Table */}
+        {/* Table of expenses */}
         <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 shadow-xl lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <div>
@@ -385,13 +542,14 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                 <span>Detalhamento dos Lançamentos</span>
               </h3>
               <p className="text-[11px] text-slate-400">
-                Mostrando {filteredExpenses.length} compras{" "}
-                {activeCardFilter !== "TODOS" ? `no cartão selecionado` : "em todos os cartões"}
+                Mostrando {filteredExpenses.length} compras no período selecionado
               </p>
             </div>
             <div className="text-right">
-              <span className="text-[10px] text-slate-400 block uppercase font-bold">Subtotal</span>
-              <span className="text-base font-extrabold text-purple-400 bg-purple-500/10 px-3 py-1 rounded-xl border border-purple-500/20 inline-block font-mono">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+                Subtotal
+              </span>
+              <span className="text-sm font-black text-purple-400 font-mono">
                 {formatBRL(
                   filteredExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
                 )}
@@ -405,7 +563,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                 <tr>
                   <th className="py-3 px-4 font-semibold">Cartão</th>
                   <th className="py-3 px-4 font-semibold">Descrição</th>
-                  <th className="py-3 px-4 font-semibold">Condição</th>
+                  <th className="py-3 px-4 font-semibold">Parcela / Tipo</th>
                   <th className="py-3 px-4 font-semibold">Data</th>
                   <th className="py-3 px-4 text-right font-semibold">Valor</th>
                   <th className="py-3 px-4 text-center font-semibold">Ações</th>
@@ -415,12 +573,14 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                 {filteredExpenses.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-slate-500">
-                      Nenhuma compra encontrada para este cartão.
+                      Nenhuma compra encontrada para este mês.
                     </td>
                   </tr>
                 ) : (
                   filteredExpenses.map((c) => {
                     const badge = getCardBadge(c.card);
+                    const isParcela = c.installments && /\d+\/\d+/.test(c.installments);
+
                     return (
                       <tr key={c.id} className="hover:bg-slate-800/40 transition-colors group">
                         <td className="py-3 px-4">
@@ -435,9 +595,24 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                             {badge.name}
                           </span>
                         </td>
-                        <td className="py-3 px-4 font-medium text-white">{c.description}</td>
+                        <td className="py-3 px-4 font-medium text-white">
+                          <div className="flex items-center gap-1.5">
+                            <span>{c.description}</span>
+                            {c.totalPurchaseAmount && c.totalInstallments && c.totalInstallments > 1 && (
+                              <span className="text-[10px] text-slate-500 font-normal">
+                                (Total: {formatBRL(c.totalPurchaseAmount)})
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3 px-4">
-                          <span className="text-[10px] text-slate-400 bg-slate-800/60 px-2 py-0.5 rounded border border-slate-800">
+                          <span
+                            className={`text-[10px] font-medium px-2 py-0.5 rounded border ${
+                              isParcela
+                                ? "bg-purple-950/60 text-purple-300 border-purple-800/40 font-mono"
+                                : "bg-slate-800/60 text-slate-400 border-slate-800"
+                            }`}
+                          >
                             {c.installments || "À vista"}
                           </span>
                         </td>
@@ -449,14 +624,14 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                           <div className="flex items-center justify-center gap-1">
                             <button
                               onClick={() => setEditingExpense(c)}
-                              className="text-slate-400 hover:text-purple-300 p-1 rounded-md hover:bg-slate-800 transition-colors"
+                              className="text-slate-400 hover:text-purple-300 p-1 rounded-md hover:bg-slate-800 transition-colors cursor-pointer"
                               title="Editar compra"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                             <button
-                              onClick={() => onDeleteGastoCartao(c.id)}
-                              className="text-slate-500 hover:text-rose-400 p-1 rounded-md hover:bg-slate-800 transition-colors"
+                              onClick={() => handleDeleteClick(c)}
+                              className="text-slate-500 hover:text-rose-400 p-1 rounded-md hover:bg-slate-800 transition-colors cursor-pointer"
                               title="Remover compra"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -472,6 +647,62 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Delete Installment Options Modal */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white">Excluir Compra Parcelada</h4>
+                <p className="text-xs text-slate-400">
+                  {itemToDelete.description} ({itemToDelete.installments})
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Esta compra faz parte de um plano de parcelamento. Como deseja proceder com a exclusão?
+            </p>
+
+            <div className="space-y-2 pt-2">
+              <button
+                onClick={() => {
+                  onDeleteGastoCartao(itemToDelete.id, false);
+                  setItemToDelete(null);
+                }}
+                className="w-full py-2.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-semibold transition-colors flex items-center justify-between border border-slate-700 cursor-pointer"
+              >
+                <span>Excluir apenas esta parcela deste mês</span>
+                <span className="text-[10px] text-slate-400 font-normal">Manter futuras</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  onDeleteGastoCartao(itemToDelete.id, true);
+                  setItemToDelete(null);
+                }}
+                className="w-full py-2.5 px-3 bg-rose-600/20 hover:bg-rose-600 text-rose-300 hover:text-white rounded-xl text-xs font-semibold transition-colors flex items-center justify-between border border-rose-500/30 cursor-pointer"
+              >
+                <span>Excluir todas as parcelas desta compra</span>
+                <span className="text-[10px] text-rose-300 group-hover:text-white font-normal">
+                  Deste mês e meses seguintes
+                </span>
+              </button>
+
+              <button
+                onClick={() => setItemToDelete(null)}
+                className="w-full py-2 text-center text-xs text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Card Edit / Add Modal */}
       <CardModal

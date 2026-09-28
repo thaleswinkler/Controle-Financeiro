@@ -237,9 +237,15 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     <option value="1/4">Parcela 1/4</option>
                     <option value="1/5">Parcela 1/5</option>
                     <option value="1/6">Parcela 1/6</option>
+                    <option value="1/7">Parcela 1/7</option>
+                    <option value="1/8">Parcela 1/8</option>
+                    <option value="1/9">Parcela 1/9</option>
                     <option value="1/10">Parcela 1/10</option>
+                    <option value="1/11">Parcela 1/11</option>
                     <option value="1/12">Parcela 1/12</option>
-                    <option value="Recorrente">Assinatura Mensal</option>
+                    <option value="1/18">Parcela 1/18</option>
+                    <option value="1/24">Parcela 1/24</option>
+                    <option value="Recorrente">Assinatura Mensal (Recorrente)</option>
                   </select>
                 </div>
 

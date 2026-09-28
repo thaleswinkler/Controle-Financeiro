@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Sparkles,
   Download,
@@ -8,6 +8,8 @@ import {
   Calendar,
   MessageSquareText,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   BrainCircuit,
   CopyPlus,
   Cloud,
@@ -64,13 +66,45 @@ export const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const periods = [
-    { value: "2026-08", label: "Agosto 2026" },
-    { value: "2026-09", label: "Setembro 2026 (Atual)" },
-    { value: "2026-10", label: "Outubro 2026" },
-    { value: "2026-11", label: "Novembro 2026" },
-    { value: "2026-12", label: "Dezembro 2026" },
+  const years = [2026, 2027, 2028];
+  const monthNames = [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
   ];
+
+  const handlePrevMonth = () => {
+    const [y, m] = selectedPeriod.split("-").map(Number);
+    let prevYear = y;
+    let prevMonth = m - 1;
+    if (prevMonth < 1) {
+      prevYear--;
+      prevMonth = 12;
+    }
+    const nextVal = `${prevYear}-${String(prevMonth).padStart(2, "0")}`;
+    onSelectPeriod(nextVal);
+  };
+
+  const handleNextMonth = () => {
+    const [y, m] = selectedPeriod.split("-").map(Number);
+    let nextYear = y;
+    let nextMonth = m + 1;
+    if (nextMonth > 12) {
+      nextYear++;
+      nextMonth = 1;
+    }
+    const nextVal = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+    onSelectPeriod(nextVal);
+  };
 
   return (
     <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 px-4 lg:px-8 py-3.5 transition-colors">
@@ -97,19 +131,43 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Period Selector (Mobile & Desktop) */}
-          <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-xl px-2.5 py-1.5 text-xs text-slate-200">
-            <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-            <select
-              value={selectedPeriod}
-              onChange={(e) => onSelectPeriod(e.target.value)}
-              className="bg-transparent border-none text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer pr-1"
+          <div className="flex items-center gap-1 bg-slate-800/80 border border-slate-700/80 rounded-xl px-1.5 py-1 text-xs text-slate-200 shadow-sm">
+            <button
+              onClick={handlePrevMonth}
+              title="Mês anterior"
+              className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer"
             >
-              {periods.map((p) => (
-                <option key={p.value} value={p.value} className="bg-slate-900 text-white">
-                  {p.label}
-                </option>
-              ))}
-            </select>
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-1 px-1">
+              <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <select
+                value={selectedPeriod}
+                onChange={(e) => onSelectPeriod(e.target.value)}
+                className="bg-transparent border-none text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer pr-1"
+              >
+                {years.map((year) => (
+                  <optgroup key={year} label={`Ano ${year}`} className="bg-slate-950 font-bold text-emerald-400">
+                    {monthNames.map((name, idx) => {
+                      const val = `${year}-${String(idx + 1).padStart(2, "0")}`;
+                      const isCurrentMonth = val === "2026-09";
+                      return (
+                        <option key={val} value={val} className="bg-slate-900 text-white font-normal">
+                          {name} {year} {isCurrentMonth ? "(Atual)" : ""}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={handleNextMonth}
+              title="Próximo mês"
+              className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
 

@@ -1,7 +1,23 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { FinancialData, FinancialMetrics, TabType, ExtractedItem, Receita, GastoFixo, GastoCartao, Investimento, GastoImprevisto, CardConfig } from "./types";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import {
+  FinancialData,
+  FinancialMetrics,
+  TabType,
+  ExtractedItem,
+  Receita,
+  GastoFixo,
+  GastoCartao,
+  Investimento,
+  GastoImprevisto,
+  CardConfig,
+} from "./types";
 import { INITIAL_DATA } from "./data/mockData";
 import { calculateMetrics, getTodayISO } from "./utils/formatters";
+import {
+  generateInstallments,
+  parseInstallmentString,
+  getMonthYearFromDate,
+} from "./utils/installments";
 import { Header } from "./components/Header";
 import { NavigationTabs } from "./components/NavigationTabs";
 import { ResumoView } from "./components/ResumoView";
@@ -19,17 +35,50 @@ import {
   auth,
   subscribeToMonthData,
   saveMonthDataToCloud,
+  addInstallmentsToCloud,
+  removeInstallmentsFromCloud,
   getStoredCloudSession,
   logoutUser,
   CloudUserSession,
 } from "./lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 
+const GLOBAL_CARDS_KEY = "fin_iq_cards_config_v2";
 const STORAGE_KEY = "fin_iq_pro_data_v2";
 
 export default function App() {
+  const [selectedPeriod, setSelectedPeriod] = useState("2026-09");
+
+  // Load configured cards globally so changes apply across all months
+  const loadStoredCards = (): CardConfig[] => {
+    try {
+      const savedCards = localStorage.getItem(GLOBAL_CARDS_KEY);
+      if (savedCards) {
+        const parsed = JSON.parse(savedCards);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return INITIAL_DATA.cards;
+  };
+
   const [data, setData] = useState<FinancialData>(() => {
     try {
+      // First check month-specific storage
+      const monthSpecific = localStorage.getItem(`fin_iq_month_2026-09`);
+      if (monthSpecific) {
+        const parsed = JSON.parse(monthSpecific);
+        if (parsed && Array.isArray(parsed.cartoes)) {
+          return {
+            ...INITIAL_DATA,
+            ...parsed,
+            cards: loadStoredCards(),
+          };
+        }
+      }
+
+      // Fallback to legacy single storage key
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
@@ -37,14 +86,14 @@ export default function App() {
           return {
             ...INITIAL_DATA,
             ...parsed,
-            cards: Array.isArray(parsed.cards) && parsed.cards.length > 0 ? parsed.cards : INITIAL_DATA.cards,
+            cards: loadStoredCards(),
           };
         }
       }
     } catch (e) {
       console.error("Erro ao carregar dados do localStorage:", e);
     }
-    return INITIAL_DATA;
+    return { ...INITIAL_DATA, cards: loadStoredCards() };
   });
 
   const [currentUser, setCurrentUser] = useState<CloudUserSession | null>(() =>
@@ -53,10 +102,15 @@ export default function App() {
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("resumo");
-  const [selectedPeriod, setSelectedPeriod] = useState("2026-09");
   const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Keep a ref to the latest data to prevent race conditions during async Firestore callbacks
+  const dataRef = useRef(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
 
   // Listen to Firebase Auth state if signed in via Google
   useEffect(() => {
@@ -85,13 +139,22 @@ export default function App() {
       (remoteData) => {
         setIsCloudSyncing(false);
         if (remoteData && remoteData.monthYear === selectedPeriod) {
-          setData(remoteData);
+          const finalData: FinancialData = {
+            ...remoteData,
+            // Ensure cards are preserved and not empty
+            cards:
+              Array.isArray(remoteData.cards) && remoteData.cards.length > 0
+                ? remoteData.cards
+                : dataRef.current.cards,
+          };
+          setData(finalData);
           try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteData));
+            localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(finalData));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(finalData));
           } catch {}
         } else {
           // If month doesn't exist on cloud yet, upload current state to seed it
-          saveMonthDataToCloud(currentUser.uid, selectedPeriod, data).catch((err) => {
+          saveMonthDataToCloud(currentUser.uid, selectedPeriod, dataRef.current).catch((err) => {
             console.error("Erro ao inicializar mês na nuvem:", err);
           });
         }
@@ -111,6 +174,7 @@ export default function App() {
   const saveState = (newData: FinancialData) => {
     setData(newData);
     try {
+      localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(newData));
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newData));
     } catch (e) {
       console.error("Erro ao salvar no localStorage:", e);
@@ -124,6 +188,60 @@ export default function App() {
         })
         .finally(() => setIsCloudSyncing(false));
     }
+  };
+
+  // Switching months seamlessly
+  const handleSelectPeriod = (newPeriod: string) => {
+    if (newPeriod === selectedPeriod) return;
+
+    // 1. Save current month before switching
+    try {
+      localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(data));
+    } catch (e) {}
+
+    // 2. Set new period
+    setSelectedPeriod(newPeriod);
+
+    // 3. Immediately look up local data for newPeriod
+    try {
+      const rawLocal = localStorage.getItem(`fin_iq_month_${newPeriod}`);
+      if (rawLocal) {
+        const parsed = JSON.parse(rawLocal);
+        if (parsed && Array.isArray(parsed.cartoes)) {
+          setData({
+            ...parsed,
+            monthYear: newPeriod,
+            cards: data.cards, // Keep cards up to date
+          });
+          return;
+        }
+      }
+    } catch (e) {}
+
+    // 4. If not found locally, create fresh baseline for the new month
+    const baseline: FinancialData = {
+      monthYear: newPeriod,
+      cards: data.cards,
+      receitas: [],
+      gastosFixos: data.gastosFixos
+        .filter((f) => f.recurring)
+        .map((f) => ({
+          ...f,
+          id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+          status: "pendente" as const,
+        })),
+      cartoes: [],
+      investimentos: [],
+      imprevistos: [],
+      metaRiqueza: data.metaRiqueza,
+      investimentoAcumuladoAnterior:
+        (data.investimentoAcumuladoAnterior || 0) +
+        (data.investimentos || []).reduce((acc, i) => acc + (Number(i.amount) || 0), 0),
+    };
+    setData(baseline);
+    try {
+      localStorage.setItem(`fin_iq_month_${newPeriod}`, JSON.stringify(baseline));
+    } catch (e) {}
   };
 
   const handleLogout = async () => {
@@ -152,8 +270,7 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // --- Handlers for Modules ---
-
+  // --- Handlers for Receitas ---
   const handleAddReceita = (newRec: Omit<Receita, "id">) => {
     const item: Receita = { id: "rec_" + Date.now(), ...newRec };
     saveState({ ...data, receitas: [item, ...data.receitas] });
@@ -171,6 +288,7 @@ export default function App() {
     addToast("info", "Receita removida");
   };
 
+  // --- Handlers for Gastos Fixos ---
   const handleAddGastoFixo = (newFixo: Omit<GastoFixo, "id">) => {
     const item: GastoFixo = { id: "fix_" + Date.now(), ...newFixo };
     saveState({ ...data, gastosFixos: [...data.gastosFixos, item] });
@@ -206,7 +324,6 @@ export default function App() {
   };
 
   const handleReplicateFixedExpenses = () => {
-    // Duplicates all recurring fixed expenses with 'pendente' status
     const count = data.gastosFixos.length;
     if (count === 0) {
       addToast("warning", "Nenhuma conta fixa cadastrada para replicar.");
@@ -221,10 +338,115 @@ export default function App() {
     addToast("success", "Contas replicadas com sucesso!", `${count} contas fixas preparadas para o novo mês.`);
   };
 
-  const handleAddGastoCartao = (newGasto: Omit<GastoCartao, "id">) => {
-    const item: GastoCartao = { id: "card_" + Date.now(), ...newGasto };
-    saveState({ ...data, cartoes: [item, ...data.cartoes] });
-    addToast("success", "Compra no cartão lançada", `${item.description} no ${item.card}.`);
+  // --- Handlers for Credit Cards & Installments Across Future Months ---
+  const handleAddGastoCartao = (
+    newGasto: Omit<GastoCartao, "id">,
+    installmentDetails?: {
+      totalInstallments: number;
+      startInstallment: number;
+      installmentAmount: number;
+      totalAmount: number;
+    }
+  ) => {
+    const isMultiInstallment = installmentDetails && installmentDetails.totalInstallments > 1;
+
+    if (!isMultiInstallment) {
+      // Single purchase (À vista or single month)
+      const item: GastoCartao = {
+        id: "card_" + Date.now(),
+        ...newGasto,
+        totalInstallments: 1,
+        currentInstallment: 1,
+      };
+      saveState({ ...data, cartoes: [item, ...data.cartoes] });
+      addToast("success", "Compra no cartão lançada", `${item.description} no ${item.card}.`);
+      return;
+    }
+
+    // Multi-installment purchase: generate installments across future months
+    const seriesId = "series_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+    const generated = generateInstallments({
+      description: newGasto.description,
+      card: newGasto.card,
+      category: newGasto.category,
+      startDate: newGasto.date || getTodayISO(0),
+      totalInstallments: installmentDetails.totalInstallments,
+      startInstallment: installmentDetails.startInstallment || 1,
+      installmentAmount: installmentDetails.installmentAmount,
+      totalPurchaseAmount: installmentDetails.totalAmount,
+      seriesId,
+    });
+
+    // Group installments by month
+    const byMonth: Record<string, GastoCartao[]> = {};
+    for (const gen of generated) {
+      if (!byMonth[gen.monthYear]) {
+        byMonth[gen.monthYear] = [];
+      }
+      byMonth[gen.monthYear].push(gen.item);
+    }
+
+    // 1. Add current month installment(s) to active state
+    const currentMonthItems = byMonth[selectedPeriod] || [];
+    let updatedCurrentCartoes = [...data.cartoes];
+    if (currentMonthItems.length > 0) {
+      updatedCurrentCartoes = [...currentMonthItems, ...updatedCurrentCartoes];
+    } else if (generated.length > 0) {
+      // If start date is another month, still place the first item in current view
+      updatedCurrentCartoes = [generated[0].item, ...updatedCurrentCartoes];
+    }
+    saveState({ ...data, cartoes: updatedCurrentCartoes });
+
+    // 2. Propagate future installments into each respective month in LocalStorage
+    for (const [mYear, items] of Object.entries(byMonth)) {
+      if (mYear === selectedPeriod) continue; // Already added to active state above
+      try {
+        const raw = localStorage.getItem(`fin_iq_month_${mYear}`);
+        let mData: FinancialData;
+        if (raw) {
+          mData = JSON.parse(raw);
+          const existing = mData.cartoes || [];
+          // Avoid duplicate additions
+          const merged = [...items, ...existing.filter((e) => !items.some((i) => i.id === e.id))];
+          mData.cartoes = merged;
+          mData.cards = data.cards; // ensure cards are up to date
+        } else {
+          mData = {
+            monthYear: mYear,
+            cards: data.cards,
+            receitas: [],
+            gastosFixos: data.gastosFixos
+              .filter((f) => f.recurring)
+              .map((f) => ({
+                ...f,
+                id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+                status: "pendente" as const,
+              })),
+            cartoes: items,
+            investimentos: [],
+            imprevistos: [],
+            metaRiqueza: data.metaRiqueza,
+            investimentoAcumuladoAnterior: data.investimentoAcumuladoAnterior,
+          };
+        }
+        localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
+      } catch (err) {
+        console.error("Erro ao salvar parcela no localStorage para", mYear, err);
+      }
+    }
+
+    // 3. Propagate into Firestore across future months if cloud is active
+    if (currentUser) {
+      addInstallmentsToCloud(currentUser.uid, byMonth, data).catch((err) => {
+        console.error("Erro ao sincronizar parcelas na nuvem:", err);
+      });
+    }
+
+    addToast(
+      "success",
+      `Compra parcelada em ${installmentDetails.totalInstallments}x`,
+      `${installmentDetails.totalInstallments} parcelas programadas automaticamente nos meses seguintes!`
+    );
   };
 
   const handleUpdateGastoCartao = (updated: GastoCartao) => {
@@ -233,9 +455,56 @@ export default function App() {
     addToast("success", "Compra no cartão atualizada", `${updated.description} alterada.`);
   };
 
-  const handleDeleteGastoCartao = (id: string) => {
-    saveState({ ...data, cartoes: data.cartoes.filter((c) => c.id !== id) });
-    addToast("info", "Lançamento de cartão removido");
+  const handleDeleteGastoCartao = (id: string, deleteSeries = false) => {
+    const targetItem = data.cartoes.find((c) => c.id === id);
+    if (!targetItem) return;
+
+    const seriesId = targetItem.installmentSeriesId;
+
+    if (deleteSeries && (seriesId || targetItem.installments?.includes("/"))) {
+      // 1. Remove from current month state
+      const newCartoes = data.cartoes.filter(
+        (c) => c.id !== id && (seriesId ? c.installmentSeriesId !== seriesId : true)
+      );
+      saveState({ ...data, cartoes: newCartoes });
+
+      // 2. Remove from other months in LocalStorage
+      const affectedMonths: string[] = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("fin_iq_month_")) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const mData = JSON.parse(raw);
+              const originalCount = (mData.cartoes || []).length;
+              const filtered = (mData.cartoes || []).filter(
+                (c: GastoCartao) =>
+                  c.id !== id && (seriesId ? c.installmentSeriesId !== seriesId : true)
+              );
+              if (filtered.length !== originalCount) {
+                mData.cartoes = filtered;
+                localStorage.setItem(key, JSON.stringify(mData));
+                affectedMonths.push(key.replace("fin_iq_month_", ""));
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Erro ao remover parcelas do localStorage:", e);
+      }
+
+      // 3. Remove from Firestore across months
+      if (currentUser && seriesId) {
+        removeInstallmentsFromCloud(currentUser.uid, seriesId, affectedMonths).catch(console.error);
+      }
+
+      addToast("info", "Parcelas Removidas", "Todas as parcelas desta compra foram excluídas dos meses atuais e futuros.");
+    } else {
+      // Delete only single item
+      saveState({ ...data, cartoes: data.cartoes.filter((c) => c.id !== id) });
+      addToast("info", "Lançamento removido deste mês.");
+    }
   };
 
   const handleSaveCard = (card: CardConfig) => {
@@ -249,6 +518,12 @@ export default function App() {
       updatedCards = [...data.cards, card];
       addToast("success", `Cartão ${card.name} cadastrado`, `Vencimento dia ${card.dueDay}, fechamento dia ${card.closingDay}.`);
     }
+
+    // Persist cards globally
+    try {
+      localStorage.setItem(GLOBAL_CARDS_KEY, JSON.stringify(updatedCards));
+    } catch {}
+
     saveState({ ...data, cards: updatedCards });
   };
 
@@ -259,10 +534,16 @@ export default function App() {
     }
     const cardName = data.cards.find((c) => c.id === cardId)?.name || "Cartão";
     const updatedCards = data.cards.filter((c) => c.id !== cardId);
+
+    try {
+      localStorage.setItem(GLOBAL_CARDS_KEY, JSON.stringify(updatedCards));
+    } catch {}
+
     saveState({ ...data, cards: updatedCards });
     addToast("info", `Cartão ${cardName} removido`);
   };
 
+  // --- Handlers for Investimentos ---
   const handleAddInvestimento = (newInv: Omit<Investimento, "id">) => {
     const item: Investimento = { id: "inv_" + Date.now(), ...newInv };
     saveState({ ...data, investimentos: [item, ...data.investimentos] });
@@ -280,6 +561,7 @@ export default function App() {
     addToast("info", "Aporte removido");
   };
 
+  // --- Handlers for Imprevistos ---
   const handleAddImprevisto = (newImp: Omit<GastoImprevisto, "id">) => {
     const item: GastoImprevisto = { id: "imp_" + Date.now(), ...newImp };
     saveState({ ...data, imprevistos: [item, ...data.imprevistos] });
@@ -307,7 +589,7 @@ export default function App() {
     addToast("success", "Saldo histórico ajustado");
   };
 
-  // --- Automation: Bulk AI / WhatsApp Confirm ---
+  // --- Automation: Bulk AI / WhatsApp Confirm with Installments Support ---
   const handleConfirmExtractedTransactions = (items: ExtractedItem[]) => {
     const newReceitas = [...data.receitas];
     const newFixos = [...data.gastosFixos];
@@ -316,6 +598,7 @@ export default function App() {
     const newImprevistos = [...data.imprevistos];
 
     let count = 0;
+    const futureInstallmentsByMonth: Record<string, GastoCartao[]> = {};
 
     for (const item of items) {
       count++;
@@ -340,13 +623,42 @@ export default function App() {
           recurring: true,
         });
       } else if (item.type === "cartao") {
-        newCartoes.unshift({
-          id: "card_ai_" + Date.now() + "_" + count,
-          ...baseEntry,
-          card: item.card || "BB",
-          installments: "À vista",
-          category: item.category || "Alimentação",
-        });
+        // Detect installments from description or category, e.g. "TV em 10x" or "1/10"
+        const instInfo = parseInstallmentString(item.description);
+
+        if (instInfo.total > 1 && !instInfo.isRecurring) {
+          const seriesId = "series_ai_" + Date.now() + "_" + count;
+          const generated = generateInstallments({
+            description: item.description,
+            card: item.card || "BB",
+            category: item.category || "Alimentação",
+            startDate: item.date || getTodayISO(0),
+            totalInstallments: instInfo.total,
+            startInstallment: instInfo.current,
+            installmentAmount: item.amount,
+            totalPurchaseAmount: item.amount * instInfo.total,
+            seriesId,
+          });
+
+          for (const gen of generated) {
+            if (gen.monthYear === selectedPeriod) {
+              newCartoes.unshift(gen.item);
+            } else {
+              if (!futureInstallmentsByMonth[gen.monthYear]) {
+                futureInstallmentsByMonth[gen.monthYear] = [];
+              }
+              futureInstallmentsByMonth[gen.monthYear].push(gen.item);
+            }
+          }
+        } else {
+          newCartoes.unshift({
+            id: "card_ai_" + Date.now() + "_" + count,
+            ...baseEntry,
+            card: item.card || "BB",
+            installments: instInfo.isRecurring ? "Recorrente" : "À vista",
+            category: item.category || "Alimentação",
+          });
+        }
       } else if (item.type === "investimento") {
         newInvestimentos.unshift({
           id: "inv_ai_" + Date.now() + "_" + count,
@@ -362,6 +674,7 @@ export default function App() {
       }
     }
 
+    // Save current month
     saveState({
       ...data,
       receitas: newReceitas,
@@ -370,6 +683,44 @@ export default function App() {
       investimentos: newInvestimentos,
       imprevistos: newImprevistos,
     });
+
+    // Propagate future installments if any were extracted
+    const futureMonthKeys = Object.keys(futureInstallmentsByMonth);
+    if (futureMonthKeys.length > 0) {
+      for (const [mYear, instList] of Object.entries(futureInstallmentsByMonth)) {
+        try {
+          const raw = localStorage.getItem(`fin_iq_month_${mYear}`);
+          let mData: FinancialData;
+          if (raw) {
+            mData = JSON.parse(raw);
+            mData.cartoes = [...instList, ...(mData.cartoes || [])];
+          } else {
+            mData = {
+              monthYear: mYear,
+              cards: data.cards,
+              receitas: [],
+              gastosFixos: data.gastosFixos
+                .filter((f) => f.recurring)
+                .map((f) => ({
+                  ...f,
+                  id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+                  status: "pendente" as const,
+                })),
+              cartoes: instList,
+              investimentos: [],
+              imprevistos: [],
+              metaRiqueza: data.metaRiqueza,
+              investimentoAcumuladoAnterior: data.investimentoAcumuladoAnterior,
+            };
+          }
+          localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
+        } catch (e) {}
+      }
+
+      if (currentUser) {
+        addInstallmentsToCloud(currentUser.uid, futureInstallmentsByMonth, data).catch(console.error);
+      }
+    }
 
     addToast(
       "success",
@@ -380,7 +731,8 @@ export default function App() {
 
   // --- Export & Import JSON ---
   const handleExportJSON = () => {
-    const jsonStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
+    const jsonStr =
+      "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data, null, 2));
     const a = document.createElement("a");
     a.href = jsonStr;
     a.download = `FinIq_Backup_${getTodayISO(0)}.json`;
@@ -432,7 +784,7 @@ export default function App() {
         onResetData={handleResetData}
         onReplicateFixedExpenses={handleReplicateFixedExpenses}
         selectedPeriod={selectedPeriod}
-        onSelectPeriod={setSelectedPeriod}
+        onSelectPeriod={handleSelectPeriod}
       />
 
       {/* Main Workspace */}
@@ -463,7 +815,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === "gastos-fixos" && (
+        {activeTab === "fixos" && (
           <GastosFixosView
             gastosFixos={data.gastosFixos}
             onAddGastoFixo={handleAddGastoFixo}

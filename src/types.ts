@@ -24,8 +24,12 @@ export interface GastoCartao {
   description: string;
   amount: number;
   date: string;
-  installments?: string; // ex: "1/3", "à vista"
+  installments?: string; // ex: "1/3", "1/12", "à vista"
   category?: string;
+  installmentSeriesId?: string; // ID linking all installments of the same purchase
+  currentInstallment?: number; // e.g. 1
+  totalInstallments?: number; // e.g. 12
+  totalPurchaseAmount?: number; // e.g. 1200
 }
 
 export interface Investimento {

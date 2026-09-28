@@ -195,3 +195,125 @@ export async function saveMonthDataToCloud(
     { merge: true }
   );
 }
+
+// Get one-time month data from Firestore
+export async function getMonthDataFromCloud(
+  uid: string,
+  monthYear: string
+): Promise<FinancialData | null> {
+  const docId = monthYear.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const monthRef = doc(db, collectionName, uid, "months", docId);
+  try {
+    const snap = await getDoc(monthRef);
+    if (snap.exists()) {
+      return snap.data() as FinancialData;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar mês da nuvem:", err);
+  }
+  return null;
+}
+
+// Add multiple installment items across future months in Firestore
+export async function addInstallmentsToCloud(
+  uid: string,
+  installmentsByMonth: Record<string, import("../types").GastoCartao[]>,
+  templateData: FinancialData
+) {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+
+  for (const [targetMonth, newItems] of Object.entries(installmentsByMonth)) {
+    const docId = targetMonth.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const monthRef = doc(db, collectionName, uid, "months", docId);
+
+    try {
+      const snap = await getDoc(monthRef);
+      let existingCartoes: import("../types").GastoCartao[] = [];
+      let baseData: Partial<FinancialData> = {};
+
+      if (snap.exists()) {
+        baseData = snap.data() as FinancialData;
+        existingCartoes = baseData.cartoes || [];
+      } else {
+        baseData = {
+          monthYear: targetMonth,
+          cards: templateData.cards,
+          receitas: [],
+          gastosFixos: (templateData.gastosFixos || [])
+            .filter((f) => f.recurring)
+            .map((f) => ({
+              ...f,
+              id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+              status: "pendente" as const,
+            })),
+          investimentos: [],
+          imprevistos: [],
+          metaRiqueza: templateData.metaRiqueza,
+          investimentoAcumuladoAnterior: templateData.investimentoAcumuladoAnterior,
+        };
+      }
+
+      const mergedCartoes = [...existingCartoes];
+      for (const item of newItems) {
+        const existingIdx = mergedCartoes.findIndex((c) => c.id === item.id);
+        if (existingIdx >= 0) {
+          mergedCartoes[existingIdx] = item;
+        } else {
+          mergedCartoes.push(item);
+        }
+      }
+
+      await setDoc(
+        monthRef,
+        {
+          ...baseData,
+          monthYear: targetMonth,
+          cartoes: mergedCartoes,
+          userId: uid,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (err) {
+      console.error(`Erro ao propagar parcelas para o mês ${targetMonth}:`, err);
+    }
+  }
+}
+
+// Remove installment series across multiple months in Firestore
+export async function removeInstallmentsFromCloud(
+  uid: string,
+  seriesId: string,
+  targetMonths: string[]
+) {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+
+  for (const m of targetMonths) {
+    const docId = m.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const monthRef = doc(db, collectionName, uid, "months", docId);
+
+    try {
+      const snap = await getDoc(monthRef);
+      if (snap.exists()) {
+        const monthData = snap.data() as FinancialData;
+        const filtered = (monthData.cartoes || []).filter(
+          (c) => c.installmentSeriesId !== seriesId
+        );
+        if (filtered.length !== (monthData.cartoes || []).length) {
+          await setDoc(
+            monthRef,
+            {
+              ...monthData,
+              cartoes: filtered,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+      }
+    } catch (err) {
+      console.error(`Erro ao remover parcelas do mês ${m}:`, err);
+    }
+  }
+}
