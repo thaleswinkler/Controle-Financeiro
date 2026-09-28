@@ -24,6 +24,7 @@ import {
   cleanupMonthCartoes,
   makeExpenseSignature,
   makeGeneralExpenseKey,
+  ScannedExpenseItem,
 } from "./utils/installments";
 import { Header } from "./components/Header";
 import { NavigationTabs } from "./components/NavigationTabs";
@@ -186,13 +187,37 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // Sync deleted keys from cloud whenever user logs in
+  // Initial startup projection to ensure all existing installments are projected into next months
+  useEffect(() => {
+    runGlobalInstallmentProjection();
+  }, []);
+
+  // Sync deleted keys and all historical months from cloud whenever user logs in
   useEffect(() => {
     if (!currentUser) return;
     getDeletionsFromCloud(currentUser.uid)
       .then((cloudKeys) => {
         if (cloudKeys && cloudKeys.length > 0) {
           recordDeletedExpenseKeys(cloudKeys);
+        }
+      })
+      .catch(console.error);
+
+    getAllUserMonthsFromCloud(currentUser.uid)
+      .then((cloudMonths) => {
+        if (cloudMonths && cloudMonths.length > 0) {
+          for (const mData of cloudMonths) {
+            if (mData.monthYear) {
+              const localKey = `fin_iq_month_${mData.monthYear}`;
+              const localRaw = localStorage.getItem(localKey);
+              if (!localRaw) {
+                try {
+                  localStorage.setItem(localKey, JSON.stringify(mData));
+                } catch {}
+              }
+            }
+          }
+          runGlobalInstallmentProjection();
         }
       })
       .catch(console.error);
@@ -208,9 +233,16 @@ export default function App() {
       selectedPeriod,
       (remoteData) => {
         setIsCloudSyncing(false);
-        if (remoteData && remoteData.monthYear === selectedPeriod) {
-          const deletedKeys = getDeletedExpenseKeys();
+        const deletedKeys = getDeletedExpenseKeys();
+        const allExpenses = collectAllExpensesFromStorage();
+        const projectedMap = projectMissingInstallmentsFromExpenses(
+          allExpenses,
+          deletedKeys,
+          dataRef.current.cards
+        );
+        const projectedForThisMonth = projectedMap[selectedPeriod] || [];
 
+        if (remoteData && remoteData.monthYear === selectedPeriod) {
           // Filter out any cartoes matching deleted keys or signatures
           const filteredCartoes = (remoteData.cartoes || []).filter((c) => {
             return (
@@ -219,14 +251,6 @@ export default function App() {
             );
           });
 
-          // Also guarantee that projected installments for selectedPeriod from all known months are preserved!
-          const allExpenses = collectAllExpensesFromStorage();
-          const projectedMap = projectMissingInstallmentsFromExpenses(
-            allExpenses,
-            deletedKeys,
-            remoteData.cards || dataRef.current.cards
-          );
-          const projectedForThisMonth = projectedMap[selectedPeriod] || [];
           const mergedCartoes = mergeProjectedInstallments(
             filteredCartoes,
             projectedForThisMonth,
@@ -247,6 +271,7 @@ export default function App() {
 
           const finalData: FinancialData = {
             ...remoteData,
+            monthYear: selectedPeriod,
             cartoes: mergedCartoes,
             gastosFixos: finalFixed,
             cards:
@@ -259,9 +284,14 @@ export default function App() {
             localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(finalData));
             localStorage.setItem(STORAGE_KEY, JSON.stringify(finalData));
           } catch {}
-        } else {
-          // If month doesn't exist on cloud yet, upload current state to seed it
-          saveMonthDataToCloud(currentUser.uid, selectedPeriod, dataRef.current).catch((err) => {
+        } else if (remoteData === null) {
+          // If month doesn't exist on cloud yet, create clean baseline WITH projected installments for this month
+          const newBaseline = buildNewMonthBaseline(selectedPeriod, dataRef.current);
+          if (projectedForThisMonth.length > 0) {
+            newBaseline.cartoes = projectedForThisMonth;
+          }
+          setData(newBaseline);
+          saveMonthDataToCloud(currentUser.uid, selectedPeriod, newBaseline).catch((err) => {
             console.error("Erro ao inicializar mês na nuvem:", err);
           });
         }
@@ -297,29 +327,49 @@ export default function App() {
     }
   };
 
-  // Helper to collect all known expenses from storage across all months
-  const collectAllExpensesFromStorage = (): GastoCartao[] => {
-    const allExpensesMap = new Map<string, GastoCartao>();
-    for (const c of data.cartoes || []) {
-      allExpensesMap.set(c.id, c);
-    }
+  // Helper to collect all known expenses across all months with billingMonth tracking
+  const collectAllExpensesFromStorage = (): ScannedExpenseItem[] => {
+    const list: ScannedExpenseItem[] = [];
+    const seenMonthItem = new Set<string>();
+
+    const addMonthCartoes = (mYear: string, cartoes?: GastoCartao[]) => {
+      if (!cartoes || !Array.isArray(cartoes) || !mYear) return;
+      for (const c of cartoes) {
+        if (!c || !c.id) continue;
+        const key = `${mYear}:::${c.id}`;
+        if (!seenMonthItem.has(key)) {
+          seenMonthItem.add(key);
+          list.push({ item: c, billingMonth: mYear });
+        }
+      }
+    };
+
+    // 1. Current active month state in memory
+    const activeMonth = data.monthYear || selectedPeriod;
+    addMonthCartoes(activeMonth, data.cartoes);
+
+    // 2. All months stored in localStorage
     try {
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && (key.startsWith("fin_iq_month_") || key === STORAGE_KEY)) {
+        if (key && key.startsWith("fin_iq_month_")) {
+          const mYear = key.replace("fin_iq_month_", "");
           const raw = localStorage.getItem(key);
           if (raw) {
             const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed?.cartoes)) {
-              for (const c of parsed.cartoes) {
-                allExpensesMap.set(c.id, c);
-              }
-            }
+            addMonthCartoes(mYear, parsed?.cartoes);
+          }
+        } else if (key === STORAGE_KEY) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            addMonthCartoes(parsed?.monthYear || selectedPeriod, parsed?.cartoes);
           }
         }
       }
     } catch {}
-    return Array.from(allExpensesMap.values());
+
+    return list;
   };
 
   // Helper to build a clean baseline for a new month inheriting fixed expenses
@@ -345,7 +395,7 @@ export default function App() {
   };
 
   // Retroactively scan and project all existing installments across all months
-  const runGlobalInstallmentProjection = async () => {
+  const runGlobalInstallmentProjection = async (notifyUser = false) => {
     setIsCloudSyncing(true);
     try {
       const allExpenses = collectAllExpensesFromStorage();
@@ -373,6 +423,8 @@ export default function App() {
             mData.cartoes = items;
             totalInjected += items.length;
           }
+          mData.cards = data.cards;
+          mData.monthYear = mYear;
           localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
         } catch (err) {}
       }
@@ -391,17 +443,22 @@ export default function App() {
         await addInstallmentsToCloud(currentUser.uid, projectedByMonth, data);
       }
 
-      if (totalInjected > 0) {
-        addToast(
-          "success",
-          "Parcelas Projetadas com Sucesso!",
-          `${totalInjected} parcelas existentes foram distribuídas e salvas nos meses seguintes.`
-        );
-      } else {
-        addToast("info", "Parcelas em dia", "Todas as compras parceladas já estão projetadas nos meses seguintes.");
+      if (notifyUser) {
+        if (totalInjected > 0) {
+          addToast(
+            "success",
+            "Parcelas Projetadas com Sucesso!",
+            `${totalInjected} parcelas existentes foram distribuídas e salvas nos meses seguintes.`
+          );
+        } else {
+          addToast("info", "Parcelas em dia", "Todas as compras parceladas já estão projetadas nos meses seguintes.");
+        }
       }
+
+      return totalInjected;
     } catch (err) {
       console.error("Erro ao sincronizar parcelas:", err);
+      return 0;
     } finally {
       setIsCloudSyncing(false);
     }
@@ -443,10 +500,7 @@ export default function App() {
       localStorage.setItem(LAST_PERIOD_KEY, newPeriod);
     } catch (e) {}
 
-    // 2. Set new period
-    setSelectedPeriod(newPeriod);
-
-    // 3. Look up local data for newPeriod or build baseline
+    // 2. Look up local data for newPeriod or build baseline
     let targetMonthData: FinancialData;
     const rawLocal = localStorage.getItem(`fin_iq_month_${newPeriod}`);
     if (rawLocal) {
@@ -469,7 +523,7 @@ export default function App() {
       }));
     }
 
-    // 4. Project missing installments from all existing purchases into this new period
+    // 3. Project missing installments from all existing purchases into this new period
     const deletedKeys = getDeletedExpenseKeys();
     const allExpenses = collectAllExpensesFromStorage();
     const projectedMap = projectMissingInstallmentsFromExpenses(allExpenses, deletedKeys, data.cards);
@@ -487,10 +541,15 @@ export default function App() {
     const { cleaned } = cleanupMonthCartoes(targetMonthData.cartoes || [], newPeriod);
     targetMonthData.cartoes = cleaned;
     targetMonthData.cards = data.cards;
+    targetMonthData.monthYear = newPeriod;
 
+    // 4. Update state and period
     setData(targetMonthData);
+    setSelectedPeriod(newPeriod);
+
     try {
       localStorage.setItem(`fin_iq_month_${newPeriod}`, JSON.stringify(targetMonthData));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(targetMonthData));
     } catch {}
 
     if (currentUser) {
@@ -662,9 +721,11 @@ export default function App() {
           const existing = mData.cartoes || [];
           mData.cartoes = mergeProjectedInstallments(existing, items, getDeletedExpenseKeys());
           mData.cards = data.cards;
+          mData.monthYear = mYear;
         } else {
           mData = buildNewMonthBaseline(mYear, data);
           mData.cartoes = items;
+          mData.monthYear = mYear;
         }
         localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
       } catch (err) {
@@ -676,6 +737,9 @@ export default function App() {
     if (currentUser) {
       await addInstallmentsToCloud(currentUser.uid, byMonth, data);
     }
+
+    // 4. Executar projeção global para garantir que todos os meses fiquem em perfeita sintonia
+    runGlobalInstallmentProjection();
 
     // 4. Feedback claro para o usuário
     if (isMultiInstallment) {
@@ -1118,7 +1182,7 @@ export default function App() {
             onDeleteGastoCartao={handleDeleteGastoCartao}
             onSaveCard={handleSaveCard}
             onDeleteCard={handleDeleteCard}
-            onSyncAllInstallments={runGlobalInstallmentProjection}
+            onSyncAllInstallments={() => runGlobalInstallmentProjection(true)}
             onCleanDuplicates={handleCleanMonthDuplicates}
           />
         )}
