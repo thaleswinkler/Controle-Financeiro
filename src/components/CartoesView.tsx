@@ -12,6 +12,7 @@ import {
   HelpCircle,
   CheckCircle2,
   Info,
+  Sparkles,
 } from "lucide-react";
 import { CardConfig, GastoCartao } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
@@ -35,6 +36,7 @@ interface CartoesViewProps {
   onDeleteGastoCartao: (id: string, deleteSeries?: boolean) => void;
   onSaveCard: (card: CardConfig) => void;
   onDeleteCard: (cardId: string) => void;
+  onSyncAllInstallments?: () => void;
 }
 
 export const CartoesView: React.FC<CartoesViewProps> = ({
@@ -45,6 +47,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   onDeleteGastoCartao,
   onSaveCard,
   onDeleteCard,
+  onSyncAllInstallments,
 }) => {
   const [activeCardFilter, setActiveCardFilter] = useState<string>("TODOS");
   const [selectedCard, setSelectedCard] = useState<string>(cards[0]?.id || "");
@@ -211,16 +214,29 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
           })}
         </div>
 
-        <button
-          onClick={() => {
-            setCardToEdit(null);
-            setIsCardModalOpen(true);
-          }}
-          className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/20 flex items-center gap-1.5 transition-all shrink-0 cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>+ Novo Cartão</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {onSyncAllInstallments && (
+            <button
+              onClick={onSyncAllInstallments}
+              title="Detectar compras parceladas existentes e projetar automaticamente nos meses seguintes"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/30 shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>Projetar Parcelas nos Meses Seguintes</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              setCardToEdit(null);
+              setIsCardModalOpen(true);
+            }}
+            className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/20 flex items-center gap-1.5 transition-all shrink-0 cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>+ Novo Cartão</span>
+          </button>
+        </div>
       </div>
 
       {/* Visual Credit Cards Summary Grid */}

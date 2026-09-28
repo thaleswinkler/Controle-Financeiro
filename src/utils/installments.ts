@@ -169,3 +169,79 @@ export const INSTALLMENT_COUNT_OPTIONS = [
   { value: 18, label: "18x" },
   { value: 24, label: "24x" },
 ];
+
+/**
+ * Scans an array of existing expenses (e.g. from current or previous months),
+ * identifies any purchases that have installments (e.g. 1/4, 1/6, 2/6, etc.),
+ * and calculates all missing subsequent installments projected into future months.
+ */
+export function projectMissingInstallmentsFromExpenses(
+  expenses: GastoCartao[]
+): Record<string, GastoCartao[]> {
+  const projectedByMonth: Record<string, GastoCartao[]> = {};
+
+  for (const item of expenses) {
+    if (!item.installments) continue;
+    const { current, total, isRecurring } = parseInstallmentString(item.installments);
+    if (isRecurring || total <= 1 || total <= current) continue;
+
+    const safeDesc = item.description.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+    const safeCard = (item.card || "card").toLowerCase();
+    const seriesId =
+      item.installmentSeriesId ||
+      `series_auto_${safeDesc}_${safeCard}_${Math.round(item.amount * 100)}`;
+
+    const totalAmt = item.totalPurchaseAmount || item.amount * total;
+
+    for (let inst = current + 1; inst <= total; inst++) {
+      const offsetMonths = inst - current;
+      const targetDate = addMonthsToDate(item.date, offsetMonths);
+      const targetMonthYear = getMonthYearFromDate(targetDate);
+
+      const newItem: GastoCartao = {
+        id: `card_${seriesId}_inst_${inst}`,
+        card: item.card,
+        description: item.description,
+        amount: item.amount,
+        date: targetDate,
+        installments: `${inst}/${total}`,
+        category: item.category || "Compras",
+        installmentSeriesId: seriesId,
+        currentInstallment: inst,
+        totalInstallments: total,
+        totalPurchaseAmount: totalAmt,
+      };
+
+      if (!projectedByMonth[targetMonthYear]) {
+        projectedByMonth[targetMonthYear] = [];
+      }
+      projectedByMonth[targetMonthYear].push(newItem);
+    }
+  }
+
+  return projectedByMonth;
+}
+
+/**
+ * Merges projected installments into a list of card expenses without duplicating.
+ */
+export function mergeProjectedInstallments(
+  existingCartoes: GastoCartao[],
+  projected: GastoCartao[]
+): GastoCartao[] {
+  const result = [...existingCartoes];
+  for (const item of projected) {
+    const alreadyExists = result.some(
+      (c) =>
+        c.id === item.id ||
+        (c.description.trim().toLowerCase() === item.description.trim().toLowerCase() &&
+          c.card === item.card &&
+          c.installments === item.installments)
+    );
+    if (!alreadyExists) {
+      result.push(item);
+    }
+  }
+  return result;
+}
+

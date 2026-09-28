@@ -17,6 +17,8 @@ import {
   generateInstallments,
   parseInstallmentString,
   getMonthYearFromDate,
+  projectMissingInstallmentsFromExpenses,
+  mergeProjectedInstallments,
 } from "./utils/installments";
 import { Header } from "./components/Header";
 import { NavigationTabs } from "./components/NavigationTabs";
@@ -37,6 +39,7 @@ import {
   saveMonthDataToCloud,
   addInstallmentsToCloud,
   removeInstallmentsFromCloud,
+  getAllUserMonthsFromCloud,
   getStoredCloudSession,
   logoutUser,
   CloudUserSession,
@@ -190,6 +193,124 @@ export default function App() {
     }
   };
 
+  // Retroactively scan and project all existing installments across all months
+  const runGlobalInstallmentProjection = async () => {
+    setIsCloudSyncing(true);
+    try {
+      const allExpensesMap = new Map<string, GastoCartao>();
+
+      // 1. Current active state expenses
+      for (const c of data.cartoes || []) {
+        allExpensesMap.set(c.id, c);
+      }
+
+      // 2. Local storage all months
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith("fin_iq_month_") || key === STORAGE_KEY)) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed?.cartoes)) {
+                for (const c of parsed.cartoes) {
+                  allExpensesMap.set(c.id, c);
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 3. Cloud months if user is signed in
+      if (currentUser) {
+        try {
+          const cloudMonths = await getAllUserMonthsFromCloud(currentUser.uid);
+          for (const m of cloudMonths) {
+            if (Array.isArray(m?.cartoes)) {
+              for (const c of m.cartoes) {
+                allExpensesMap.set(c.id, c);
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      const allExpenses = Array.from(allExpensesMap.values());
+      const projectedByMonth = projectMissingInstallmentsFromExpenses(allExpenses);
+
+      let totalInjected = 0;
+
+      // Injects into each target month in LocalStorage
+      for (const [mYear, items] of Object.entries(projectedByMonth)) {
+        try {
+          const raw = localStorage.getItem(`fin_iq_month_${mYear}`);
+          let mData: FinancialData;
+          if (raw) {
+            mData = JSON.parse(raw);
+            const initialCount = (mData.cartoes || []).length;
+            mData.cartoes = mergeProjectedInstallments(mData.cartoes || [], items);
+            totalInjected += mData.cartoes.length - initialCount;
+          } else {
+            mData = {
+              monthYear: mYear,
+              cards: data.cards,
+              receitas: [],
+              gastosFixos: data.gastosFixos
+                .filter((f) => f.recurring)
+                .map((f) => ({
+                  ...f,
+                  id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+                  status: "pendente" as const,
+                })),
+              cartoes: items,
+              investimentos: [],
+              imprevistos: [],
+              metaRiqueza: data.metaRiqueza,
+              investimentoAcumuladoAnterior: data.investimentoAcumuladoAnterior,
+            };
+            totalInjected += items.length;
+          }
+          localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
+        } catch (err) {}
+      }
+
+      // Injects into currently viewed month state if affected
+      const currentMonthProjected = projectedByMonth[selectedPeriod];
+      if (currentMonthProjected && currentMonthProjected.length > 0) {
+        const mergedCurrent = mergeProjectedInstallments(data.cartoes, currentMonthProjected);
+        if (mergedCurrent.length !== data.cartoes.length) {
+          saveState({ ...data, cartoes: mergedCurrent });
+        }
+      }
+
+      // Injects into Firestore across all affected months
+      if (currentUser && Object.keys(projectedByMonth).length > 0) {
+        await addInstallmentsToCloud(currentUser.uid, projectedByMonth, data);
+      }
+
+      if (totalInjected > 0) {
+        addToast(
+          "success",
+          "Parcelas Projetadas com Sucesso!",
+          `${totalInjected} parcelas existentes foram distribuídas e salvas nos meses seguintes.`
+        );
+      }
+    } catch (err) {
+      console.error("Erro ao sincronizar parcelas:", err);
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
+  // Run auto-projection once on initial load and when currentUser is authenticated
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      runGlobalInstallmentProjection();
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [currentUser]);
+
   // Switching months seamlessly
   const handleSelectPeriod = (newPeriod: string) => {
     if (newPeriod === selectedPeriod) return;
@@ -208,17 +329,30 @@ export default function App() {
       if (rawLocal) {
         const parsed = JSON.parse(rawLocal);
         if (parsed && Array.isArray(parsed.cartoes)) {
+          // If the month has no fixed expenses, inherit recurring expenses from current month
+          const fixedExpenses =
+            Array.isArray(parsed.gastosFixos) && parsed.gastosFixos.length > 0
+              ? parsed.gastosFixos
+              : data.gastosFixos
+                  .filter((f) => f.recurring)
+                  .map((f) => ({
+                    ...f,
+                    id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+                    status: "pendente" as const,
+                  }));
+
           setData({
             ...parsed,
             monthYear: newPeriod,
             cards: data.cards, // Keep cards up to date
+            gastosFixos: fixedExpenses,
           });
           return;
         }
       }
     } catch (e) {}
 
-    // 4. If not found locally, create fresh baseline for the new month
+    // 4. If not found locally, create fresh baseline for the new month inheriting recurring fixed expenses
     const baseline: FinancialData = {
       monthYear: newPeriod,
       cards: data.cards,
@@ -815,7 +949,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === "fixos" && (
+        {(activeTab === "gastos-fixos" || (activeTab as string) === "fixos") && (
           <GastosFixosView
             gastosFixos={data.gastosFixos}
             onAddGastoFixo={handleAddGastoFixo}
@@ -836,6 +970,7 @@ export default function App() {
             onDeleteGastoCartao={handleDeleteGastoCartao}
             onSaveCard={handleSaveCard}
             onDeleteCard={handleDeleteCard}
+            onSyncAllInstallments={runGlobalInstallmentProjection}
           />
         )}
 

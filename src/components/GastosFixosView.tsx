@@ -255,8 +255,20 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
             <tbody className="divide-y divide-slate-800/50">
               {gastosFixos.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-500">
-                    Nenhum gasto fixo cadastrado.
+                  <td colSpan={5} className="py-10 text-center text-slate-400">
+                    <div className="flex flex-col items-center justify-center gap-3 max-w-sm mx-auto">
+                      <Receipt className="w-8 h-8 text-slate-600" />
+                      <p className="text-xs text-slate-400">
+                        Nenhum gasto fixo cadastrado para este mês ainda.
+                      </p>
+                      <button
+                        onClick={onReplicateNextMonth}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow-lg shadow-indigo-600/20 flex items-center gap-2 transition-all cursor-pointer"
+                      >
+                        <CopyPlus className="w-4 h-4" />
+                        <span>Copiar Contas do Mês Anterior</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ) : (

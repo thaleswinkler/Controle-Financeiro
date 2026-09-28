@@ -4,6 +4,8 @@ import {
   doc,
   getDoc,
   setDoc,
+  collection,
+  getDocs,
   onSnapshot,
   getDocFromServer,
   Unsubscribe,
@@ -315,5 +317,18 @@ export async function removeInstallmentsFromCloud(
     } catch (err) {
       console.error(`Erro ao remover parcelas do mês ${m}:`, err);
     }
+  }
+}
+
+// Fetch all saved months from cloud for full projection sync
+export async function getAllUserMonthsFromCloud(uid: string): Promise<FinancialData[]> {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const monthsCol = collection(db, collectionName, uid, "months");
+  try {
+    const snap = await getDocs(monthsCol);
+    return snap.docs.map((d) => d.data() as FinancialData);
+  } catch (err) {
+    console.error("Erro ao carregar todos os meses da nuvem:", err);
+    return [];
   }
 }
