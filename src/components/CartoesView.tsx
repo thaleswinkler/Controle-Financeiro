@@ -13,10 +13,16 @@ import {
   CheckCircle2,
   Info,
   Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import { CardConfig, GastoCartao } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
-import { addMonthsToDate, getMonthYearFromDate, INSTALLMENT_COUNT_OPTIONS } from "../utils/installments";
+import {
+  addMonthsToDate,
+  getMonthYearFromDate,
+  calculateInvoiceMonth,
+  INSTALLMENT_COUNT_OPTIONS,
+} from "../utils/installments";
 import { CardModal } from "./CardModal";
 import { EditTransactionModal } from "./EditTransactionModal";
 
@@ -30,6 +36,7 @@ interface CartoesViewProps {
       startInstallment: number;
       installmentAmount: number;
       totalAmount: number;
+      closingDay?: number;
     }
   ) => void;
   onUpdateGastoCartao: (gasto: GastoCartao) => void;
@@ -37,6 +44,7 @@ interface CartoesViewProps {
   onSaveCard: (card: CardConfig) => void;
   onDeleteCard: (cardId: string) => void;
   onSyncAllInstallments?: () => void;
+  onCleanDuplicates?: () => void;
 }
 
 export const CartoesView: React.FC<CartoesViewProps> = ({
@@ -48,6 +56,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   onSaveCard,
   onDeleteCard,
   onSyncAllInstallments,
+  onCleanDuplicates,
 }) => {
   const [activeCardFilter, setActiveCardFilter] = useState<string>("TODOS");
   const [selectedCard, setSelectedCard] = useState<string>(cards[0]?.id || "");
@@ -75,6 +84,18 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   const isRecurring = installmentCount === -1;
   const isInstallment = installmentCount > 1 && !isRecurring;
 
+  const selectedCardConfig = cards.find((c) => c.id === selectedCard) || cards[0];
+
+  const targetInvoiceMonth = useMemo(() => {
+    if (!selectedCardConfig || !date) return "";
+    return calculateInvoiceMonth(date, selectedCardConfig.closingDay);
+  }, [date, selectedCardConfig]);
+
+  const isShiftedToNextMonth = useMemo(() => {
+    if (!date || !targetInvoiceMonth) return false;
+    return targetInvoiceMonth !== date.slice(0, 7);
+  }, [date, targetInvoiceMonth]);
+
   const installmentAmount = useMemo(() => {
     if (numVal <= 0) return 0;
     if (!isInstallment) return numVal;
@@ -95,7 +116,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
 
   const previewEndMonth = useMemo(() => {
     if (!isInstallment || !date) return "";
-    const offsetMonths = installmentCount - 1;
+    const offsetMonths = installmentCount - 1 + (isShiftedToNextMonth ? 1 : 0);
     const finalDate = addMonthsToDate(date, offsetMonths);
     const parts = finalDate.split("-");
     if (parts.length >= 2) {
@@ -107,7 +128,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
       return `${monthNames[mIdx] || parts[1]}/${parts[0]}`;
     }
     return "";
-  }, [isInstallment, date, installmentCount]);
+  }, [isInstallment, date, installmentCount, isShiftedToNextMonth]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,14 +152,13 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
         currentInstallment: startInstallment,
         totalPurchaseAmount: Math.round(totalPurchaseAmount * 100) / 100,
       },
-      isInstallment
-        ? {
-            totalInstallments: installmentCount,
-            startInstallment,
-            installmentAmount: Math.round(installmentAmount * 100) / 100,
-            totalAmount: Math.round(totalPurchaseAmount * 100) / 100,
-          }
-        : undefined
+      {
+        totalInstallments: isInstallment ? installmentCount : 1,
+        startInstallment: isInstallment ? startInstallment : 1,
+        installmentAmount: Math.round(installmentAmount * 100) / 100,
+        totalAmount: Math.round(totalPurchaseAmount * 100) / 100,
+        closingDay: selectedCardConfig?.closingDay,
+      }
     );
 
     setDescription("");
@@ -215,6 +235,17 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {onCleanDuplicates && (
+            <button
+              onClick={onCleanDuplicates}
+              title="Remover compras duplicadas ou lançamentos antigos desta fatura"
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 shadow-sm flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-amber-400" />
+              <span>Limpar Duplicatas</span>
+            </button>
+          )}
+
           {onSyncAllInstallments && (
             <button
               onClick={onSyncAllInstallments}
@@ -535,13 +566,28 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
               </div>
             )}
 
+            {isShiftedToNextMonth && (
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/40 text-[11px] text-amber-200 flex items-start gap-2">
+                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-amber-300">Fatura fechada!</span> A compra foi feita dia{" "}
+                  <strong>{date ? date.split("-")[2] : ""}</strong> após o fechamento do {selectedCardConfig?.name} (dia {selectedCardConfig?.closingDay}).
+                  Ela entrará automaticamente na fatura de <strong>{targetInvoiceMonth}</strong> (Vencimento dia {selectedCardConfig?.dueDay})!
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 font-bold text-white rounded-xl transition-all shadow-lg shadow-purple-600/20 active:scale-95 text-xs cursor-pointer flex items-center justify-center gap-1.5"
             >
               <PlusCircle className="w-4 h-4" />
               <span>
-                {isInstallment
+                {isShiftedToNextMonth
+                  ? isInstallment
+                    ? `Lançar em ${installmentCount}x (Início em ${targetInvoiceMonth})`
+                    : `Lançar na Fatura de ${targetInvoiceMonth}`
+                  : isInstallment
                   ? `Lançar Compra em ${installmentCount}x`
                   : "Lançar no Cartão"}
               </span>
@@ -551,7 +597,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
 
         {/* Table of expenses */}
         <div className="bg-slate-900/70 backdrop-blur-md rounded-2xl p-5 border border-slate-800 shadow-xl lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <Layers className="w-4 h-4 text-purple-400" />
@@ -561,15 +607,42 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
                 Mostrando {filteredExpenses.length} compras no período selecionado
               </p>
             </div>
-            <div className="text-right">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
-                Subtotal
-              </span>
-              <span className="text-sm font-black text-purple-400 font-mono">
-                {formatBRL(
-                  filteredExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
-                )}
-              </span>
+
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+              {onCleanDuplicates && (
+                <button
+                  type="button"
+                  onClick={onCleanDuplicates}
+                  className="px-2.5 py-1.5 rounded-xl border border-slate-700 hover:border-amber-500/50 bg-slate-800/80 hover:bg-amber-500/10 text-[11px] font-semibold text-slate-300 hover:text-amber-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="Remove compras repetidas/duplicadas deste mês"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Limpar Duplicados</span>
+                </button>
+              )}
+
+              {onSyncAllInstallments && (
+                <button
+                  type="button"
+                  onClick={onSyncAllInstallments}
+                  className="px-2.5 py-1.5 rounded-xl border border-slate-700 hover:border-purple-500/50 bg-slate-800/80 hover:bg-purple-500/10 text-[11px] font-semibold text-slate-300 hover:text-purple-300 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="Projetar parcelas de compras existentes para os meses seguintes"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Sincronizar Parcelas</span>
+                </button>
+              )}
+
+              <div className="text-right pl-2 border-l border-slate-800">
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block">
+                  Subtotal
+                </span>
+                <span className="text-sm font-black text-purple-400 font-mono">
+                  {formatBRL(
+                    filteredExpenses.reduce((sum, item) => sum + (Number(item.amount) || 0), 0)
+                  )}
+                </span>
+              </div>
             </div>
           </div>
 

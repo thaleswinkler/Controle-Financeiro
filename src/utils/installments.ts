@@ -1,4 +1,4 @@
-import { GastoCartao } from "../types";
+import { GastoCartao, CardConfig } from "../types";
 
 /**
  * Safely adds months to a YYYY-MM-DD or YYYY-MM date string, correctly handling
@@ -38,6 +38,41 @@ export function getMonthYearFromDate(dateStr: string): string {
   return dateStr;
 }
 
+/**
+ * In Brazilian financial management (paying bills upon salary and living with card):
+ * The system reference month is ALWAYS the NEXT month (+1 from today's calendar date).
+ * E.g., in September 2026, the reference month is "2026-10" (Outubro).
+ */
+export function getDefaultReferenceMonth(): string {
+  const now = new Date();
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const y = nextMonth.getFullYear();
+  const m = String(nextMonth.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/**
+ * Calculates the credit card invoice month (YYYY-MM).
+ * In Brazilian credit card rules:
+ * If the purchase day is on or after the card's closingDay (dia de fechamento / melhor dia de compra),
+ * the current invoice is closed and the purchase automatically enters NEXT month's invoice!
+ */
+export function calculateInvoiceMonth(
+  purchaseDate: string,
+  closingDay?: number
+): string {
+  if (!purchaseDate) return "";
+  const parts = purchaseDate.split("-");
+  if (parts.length < 3) return purchaseDate.slice(0, 7);
+  const day = parseInt(parts[2], 10);
+
+  // If purchase day >= closingDay, invoice has closed for this month, belongs to next month!
+  if (closingDay && closingDay > 0 && day >= closingDay) {
+    return addMonthsToDate(purchaseDate, 1).slice(0, 7);
+  }
+  return `${parts[0]}-${parts[1]}`;
+}
+
 export interface GeneratedInstallment {
   monthYear: string;
   item: GastoCartao;
@@ -53,11 +88,15 @@ export interface InstallmentGenerationParams {
   installmentAmount: number;
   totalPurchaseAmount: number;
   seriesId?: string;
+  closingDay?: number;
 }
 
 /**
  * Generates an array of installments across months starting from `startDate`
- * (or from the specified `startInstallment`).
+ * (or from the specified `startInstallment`), accurately honoring the credit card closing day.
+ * If purchase day >= closingDay:
+ *   - The 1st installment starts in NEXT month!
+ *   - Subsequent installments follow month by month.
  */
 export function generateInstallments(
   params: InstallmentGenerationParams
@@ -72,25 +111,31 @@ export function generateInstallments(
     installmentAmount,
     totalPurchaseAmount,
     seriesId = "series_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+    closingDay,
   } = params;
 
+  // Determine initial invoice month based on closing day
+  const initialInvoiceMonth = calculateInvoiceMonth(startDate, closingDay);
+  const calendarMonth = getMonthYearFromDate(startDate);
+  const isPostClosing = initialInvoiceMonth !== calendarMonth;
+
   if (totalInstallments <= 1) {
-    const monthYear = getMonthYearFromDate(startDate);
+    const itemDate = isPostClosing ? addMonthsToDate(startDate, 1) : startDate;
     return [
       {
-        monthYear,
+        monthYear: initialInvoiceMonth,
         item: {
-          id: "card_" + Date.now(),
+          id: "card_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
           card,
           description,
-          amount: totalPurchaseAmount || installmentAmount,
-          date: startDate,
+          amount: Math.round((totalPurchaseAmount || installmentAmount) * 100) / 100,
+          date: itemDate,
           installments: "À vista",
           category,
           installmentSeriesId: seriesId,
           currentInstallment: 1,
           totalInstallments: 1,
-          totalPurchaseAmount: totalPurchaseAmount || installmentAmount,
+          totalPurchaseAmount: Math.round((totalPurchaseAmount || installmentAmount) * 100) / 100,
         },
       },
     ];
@@ -99,7 +144,8 @@ export function generateInstallments(
   const results: GeneratedInstallment[] = [];
 
   for (let inst = startInstallment; inst <= totalInstallments; inst++) {
-    const offsetMonths = inst - startInstallment;
+    // If purchase was made after closing day, the 1st installment starts in +1 month
+    const offsetMonths = inst - startInstallment + (isPostClosing ? 1 : 0);
     const installmentDate = addMonthsToDate(startDate, offsetMonths);
     const monthYear = getMonthYearFromDate(installmentDate);
 
@@ -116,7 +162,7 @@ export function generateInstallments(
         installmentSeriesId: seriesId,
         currentInstallment: inst,
         totalInstallments,
-        totalPurchaseAmount,
+        totalPurchaseAmount: Math.round(totalPurchaseAmount * 100) / 100,
       },
     });
   }
@@ -125,29 +171,62 @@ export function generateInstallments(
 }
 
 /**
- * Parses installment count from standard strings like "1/12", "1/3", "À vista", "Recorrente"
+ * Parses installment count from standard strings like "1/12", "1 de 12", "Parcela 1/4", "10x", "À vista", "Recorrente"
  */
-export function parseInstallmentString(raw: string): {
+export function parseInstallmentString(
+  raw?: string,
+  desc?: string,
+  currentProp?: number,
+  totalProp?: number
+): {
   current: number;
   total: number;
   isRecurring: boolean;
 } {
-  if (!raw) return { current: 1, total: 1, isRecurring: false };
-  const str = raw.trim();
+  if (currentProp && totalProp && totalProp > 1) {
+    return { current: currentProp, total: totalProp, isRecurring: false };
+  }
+  const str = (raw || "").trim();
 
   if (str.toLowerCase().includes("recorrente") || str.toLowerCase().includes("assinatura")) {
     return { current: 1, total: 1, isRecurring: true };
   }
 
-  const match = str.match(/(\d+)\s*\/\s*(\d+)/);
-  if (match) {
-    const current = parseInt(match[1], 10);
-    const total = parseInt(match[2], 10);
+  // Matches "1/12", "1 / 12", "01/12", "1 de 12", "Parcela 1 de 12"
+  const matchSlash = str.match(/(\d+)\s*(?:\/|\s+de\s+)\s*(\d+)/i);
+  if (matchSlash) {
+    const current = parseInt(matchSlash[1], 10);
+    const total = parseInt(matchSlash[2], 10);
     return {
       current: isNaN(current) ? 1 : current,
       total: isNaN(total) ? 1 : total,
       isRecurring: false,
     };
+  }
+
+  // Matches "10x", "12x"
+  const matchX = str.match(/(\d+)\s*x/i);
+  if (matchX) {
+    const total = parseInt(matchX[1], 10);
+    return {
+      current: 1,
+      total: isNaN(total) ? 1 : total,
+      isRecurring: false,
+    };
+  }
+
+  // Check description for "(1/6)" or "1/6" or "1 de 6"
+  if (desc) {
+    const descMatch = desc.match(/(\d+)\s*(?:\/|\s+de\s+)\s*(\d+)/i);
+    if (descMatch) {
+      const current = parseInt(descMatch[1], 10);
+      const total = parseInt(descMatch[2], 10);
+      return {
+        current: isNaN(current) ? 1 : current,
+        total: isNaN(total) ? 1 : total,
+        isRecurring: false,
+      };
+    }
   }
 
   return { current: 1, total: 1, isRecurring: false };
@@ -171,45 +250,119 @@ export const INSTALLMENT_COUNT_OPTIONS = [
 ];
 
 /**
+ * Generates unique signatures for an expense to identify and prevent resurrecting deleted items
+ */
+export function makeExpenseSignature(
+  desc: string,
+  card: string,
+  installments: string,
+  monthYear: string
+): string {
+  const cleanDesc = (desc || "").trim().toLowerCase();
+  const cleanCard = (card || "").trim().toLowerCase();
+  const cleanInst = (installments || "").trim().toLowerCase();
+  return `${cleanDesc}:::${cleanCard}:::${cleanInst}:::${monthYear}`;
+}
+
+export function makeExpenseItemSignature(item: GastoCartao, monthYear?: string): string {
+  const mYear = monthYear || (item.date ? item.date.slice(0, 7) : "");
+  return makeExpenseSignature(item.description, item.card, item.installments || "", mYear);
+}
+
+export function makeGeneralExpenseKey(
+  desc: string,
+  card: string,
+  amount: number,
+  monthYear: string
+): string {
+  const cleanDesc = (desc || "").trim().toLowerCase();
+  const cleanCard = (card || "").trim().toLowerCase();
+  const cleanAmt = Math.round(Number(amount || 0) * 100);
+  return `${cleanDesc}:::${cleanCard}:::${cleanAmt}:::${monthYear}`;
+}
+
+/**
  * Scans an array of existing expenses (e.g. from current or previous months),
- * identifies any purchases that have installments (e.g. 1/4, 1/6, 2/6, etc.),
- * and calculates all missing subsequent installments projected into future months.
+ * identifies all purchases with installments (e.g. 1/4, 1/6, 2/6, etc.),
+ * and projects all missing subsequent installments into their respective future months.
+ * Strictly checks `deletedKeys` so that deleted items NEVER return.
  */
 export function projectMissingInstallmentsFromExpenses(
-  expenses: GastoCartao[]
+  expenses: GastoCartao[],
+  deletedKeys?: Set<string>,
+  cardsConfig?: CardConfig[]
 ): Record<string, GastoCartao[]> {
   const projectedByMonth: Record<string, GastoCartao[]> = {};
+  const processedSeries = new Set<string>();
 
   for (const item of expenses) {
-    if (!item.installments) continue;
-    const { current, total, isRecurring } = parseInstallmentString(item.installments);
-    if (isRecurring || total <= 1 || total <= current) continue;
+    const { current, total, isRecurring } = parseInstallmentString(
+      item.installments,
+      item.description,
+      item.currentInstallment,
+      item.totalInstallments
+    );
+
+    if (isRecurring || total <= 1) continue;
 
     const safeDesc = item.description.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
     const safeCard = (item.card || "card").toLowerCase();
     const seriesId =
       item.installmentSeriesId ||
-      `series_auto_${safeDesc}_${safeCard}_${Math.round(item.amount * 100)}`;
+      `series_${safeDesc}_${safeCard}_${Math.round(item.amount * 100)}_${total}`;
+
+    // Prevent re-processing the same series multiple times from different months
+    const seriesKey = `${seriesId}_${total}`;
+    if (processedSeries.has(seriesKey)) continue;
+    processedSeries.add(seriesKey);
 
     const totalAmt = item.totalPurchaseAmount || item.amount * total;
+    const cardConfig = cardsConfig?.find((c) => c.id === item.card || c.name === item.card);
+    const closingDay = cardConfig?.closingDay;
+
+    // Determine the base invoice month of installment 1
+    // If the item itself is installment `current`, find where installment 1 was
+    const itemMonth = item.date ? item.date.slice(0, 7) : "";
+    const baseInvoiceMonth = addMonthsToDate(itemMonth + "-01", -(current - 1)).slice(0, 7);
 
     for (let inst = current + 1; inst <= total; inst++) {
-      const offsetMonths = inst - current;
-      const targetDate = addMonthsToDate(item.date, offsetMonths);
-      const targetMonthYear = getMonthYearFromDate(targetDate);
+      const offsetFromBase = inst - 1;
+      const targetMonthYear = addMonthsToDate(baseInvoiceMonth + "-01", offsetFromBase).slice(0, 7);
+      const instLabel = `${inst}/${total}`;
+
+      // Pick a representative date in the target month (e.g. same day of original purchase)
+      const dayPart = item.date && item.date.split("-")[2] ? item.date.split("-")[2] : "10";
+      const targetDate = `${targetMonthYear}-${dayPart}`;
+
+      // Check if user previously deleted this specific installment or the series
+      const signature = makeExpenseSignature(item.description, item.card, instLabel, targetMonthYear);
+      const generalKey = makeGeneralExpenseKey(item.description, item.card, item.amount, targetMonthYear);
+      const instId = `card_${seriesId}_inst_${inst}`;
+
+      if (deletedKeys) {
+        if (
+          deletedKeys.has(instId) ||
+          deletedKeys.has(signature) ||
+          deletedKeys.has(generalKey) ||
+          deletedKeys.has(`series_${seriesId}`) ||
+          deletedKeys.has(`series_${safeDesc}_${safeCard}`)
+        ) {
+          continue; // Respect user deletion!
+        }
+      }
 
       const newItem: GastoCartao = {
-        id: `card_${seriesId}_inst_${inst}`,
+        id: instId,
         card: item.card,
         description: item.description,
         amount: item.amount,
         date: targetDate,
-        installments: `${inst}/${total}`,
+        installments: instLabel,
         category: item.category || "Compras",
         installmentSeriesId: seriesId,
         currentInstallment: inst,
         totalInstallments: total,
-        totalPurchaseAmount: totalAmt,
+        totalPurchaseAmount: Math.round(totalAmt * 100) / 100,
       };
 
       if (!projectedByMonth[targetMonthYear]) {
@@ -223,25 +376,91 @@ export function projectMissingInstallmentsFromExpenses(
 }
 
 /**
+ * Cleans up duplicated or stale purchases in a month's credit card invoice:
+ * - Detects duplicate entries of the exact same purchase and keeps only 1.
+ * - Detects conflicting installments (e.g. an old 1/6 and a newer 2/6 in the same month).
+ * Returns the cleaned list and the list of deleted items so their signatures can be tombstoned.
+ */
+export function cleanupMonthCartoes(
+  cartoes: GastoCartao[],
+  currentMonthYear: string
+): { cleaned: GastoCartao[]; removedCount: number; removedItems: GastoCartao[] } {
+  const result: GastoCartao[] = [];
+  const removedItems: GastoCartao[] = [];
+
+  const seenExact = new Set<string>();
+
+  for (const item of cartoes) {
+    const cleanDesc = (item.description || "").trim().toLowerCase();
+    const cleanCard = (item.card || "").trim().toLowerCase();
+    const cleanInst = (item.installments || "").trim().toLowerCase();
+    const cleanAmt = Math.round(Number(item.amount || 0) * 100);
+
+    // Exact match key
+    const exactKey = `${cleanDesc}:::${cleanCard}:::${cleanAmt}:::${cleanInst}`;
+
+    if (seenExact.has(exactKey)) {
+      removedItems.push(item);
+      continue;
+    }
+
+    seenExact.add(exactKey);
+    result.push(item);
+  }
+
+  return {
+    cleaned: result,
+    removedCount: removedItems.length,
+    removedItems,
+  };
+}
+
+/**
  * Merges projected installments into a list of card expenses without duplicating.
  */
 export function mergeProjectedInstallments(
   existingCartoes: GastoCartao[],
-  projected: GastoCartao[]
+  projected: GastoCartao[],
+  deletedKeys?: Set<string>
 ): GastoCartao[] {
   const result = [...existingCartoes];
+
   for (const item of projected) {
+    // Check if deleted
+    if (deletedKeys) {
+      const sig = makeExpenseItemSignature(item);
+      const genKey = makeGeneralExpenseKey(
+        item.description,
+        item.card,
+        item.amount,
+        item.date ? item.date.slice(0, 7) : ""
+      );
+      if (
+        deletedKeys.has(item.id) ||
+        deletedKeys.has(sig) ||
+        deletedKeys.has(genKey) ||
+        (item.installmentSeriesId && deletedKeys.has(`series_${item.installmentSeriesId}`))
+      ) {
+        continue;
+      }
+    }
+
     const alreadyExists = result.some(
       (c) =>
         c.id === item.id ||
         (c.description.trim().toLowerCase() === item.description.trim().toLowerCase() &&
           c.card === item.card &&
-          c.installments === item.installments)
+          (c.installments === item.installments ||
+            (c.currentInstallment === item.currentInstallment &&
+              c.totalInstallments === item.totalInstallments &&
+              item.totalInstallments &&
+              item.totalInstallments > 1)))
     );
+
     if (!alreadyExists) {
       result.push(item);
     }
   }
+
   return result;
 }
-

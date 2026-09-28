@@ -332,3 +332,29 @@ export async function getAllUserMonthsFromCloud(uid: string): Promise<FinancialD
     return [];
   }
 }
+
+// Persist deleted keys and signatures in Cloud to prevent resurrection
+export async function saveDeletionsToCloud(uid: string, keys: string[]) {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const delRef = doc(db, collectionName, uid, "settings", "deletions");
+  try {
+    await setDoc(delRef, { keys, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.error("Erro ao salvar exclusões na nuvem:", err);
+  }
+}
+
+export async function getDeletionsFromCloud(uid: string): Promise<string[]> {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const delRef = doc(db, collectionName, uid, "settings", "deletions");
+  try {
+    const snap = await getDoc(delRef);
+    if (snap.exists() && Array.isArray(snap.data()?.keys)) {
+      return snap.data().keys;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar exclusões da nuvem:", err);
+  }
+  return [];
+}
+

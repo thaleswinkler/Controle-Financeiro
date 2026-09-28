@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { FinancialData } from "../types";
 import { exportToCSV } from "../utils/formatters";
+import { getDefaultReferenceMonth } from "../utils/installments";
 import type { CloudUserSession } from "../lib/firebase";
 
 interface HeaderProps {
@@ -150,10 +151,10 @@ export const Header: React.FC<HeaderProps> = ({
                   <optgroup key={year} label={`Ano ${year}`} className="bg-slate-950 font-bold text-emerald-400">
                     {monthNames.map((name, idx) => {
                       const val = `${year}-${String(idx + 1).padStart(2, "0")}`;
-                      const isCurrentMonth = val === "2026-09";
+                      const isRefMonth = val === getDefaultReferenceMonth();
                       return (
                         <option key={val} value={val} className="bg-slate-900 text-white font-normal">
-                          {name} {year} {isCurrentMonth ? "(Atual)" : ""}
+                          {name} {year} {isRefMonth ? "★ (Mês Referência)" : ""}
                         </option>
                       );
                     })}

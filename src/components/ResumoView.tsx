@@ -20,6 +20,7 @@ interface ResumoViewProps {
   metrics: FinancialMetrics;
   onOpenAdvisorModal: () => void;
   onOpenWhatsAppModal: () => void;
+  onToggleFixStatus?: (id: string) => void;
 }
 
 export const ResumoView: React.FC<ResumoViewProps> = ({
@@ -27,6 +28,7 @@ export const ResumoView: React.FC<ResumoViewProps> = ({
   metrics,
   onOpenAdvisorModal,
   onOpenWhatsAppModal,
+  onToggleFixStatus,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("todos");
@@ -470,7 +472,7 @@ export const ResumoView: React.FC<ResumoViewProps> = ({
             <div className="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs">
               <button
                 onClick={() => setTypeFilter("todos")}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                   typeFilter === "todos"
                     ? "bg-slate-700 text-white font-bold"
                     : "text-slate-400 hover:text-white"
@@ -480,7 +482,7 @@ export const ResumoView: React.FC<ResumoViewProps> = ({
               </button>
               <button
                 onClick={() => setTypeFilter("receita")}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                   typeFilter === "receita"
                     ? "bg-emerald-500/20 text-emerald-300 font-bold"
                     : "text-slate-400 hover:text-white"
@@ -489,8 +491,18 @@ export const ResumoView: React.FC<ResumoViewProps> = ({
                 Receitas
               </button>
               <button
+                onClick={() => setTypeFilter("gasto_fixo")}
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                  typeFilter === "gasto_fixo"
+                    ? "bg-indigo-500/20 text-indigo-300 font-bold"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Gastos Fixos
+              </button>
+              <button
                 onClick={() => setTypeFilter("cartao")}
-                className={`px-2.5 py-1 rounded-lg transition-colors ${
+                className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                   typeFilter === "cartao"
                     ? "bg-purple-500/20 text-purple-300 font-bold"
                     : "text-slate-400 hover:text-white"
@@ -543,7 +555,24 @@ export const ResumoView: React.FC<ResumoViewProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 font-medium text-white">{item.description}</td>
-                    <td className="py-3 px-4 text-slate-400">{item.detail}</td>
+                    <td className="py-3 px-4 text-slate-400">
+                      {item.type === "gasto_fixo" && onToggleFixStatus ? (
+                        <button
+                          type="button"
+                          onClick={() => onToggleFixStatus(item.id)}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                            item.detail === "Pago"
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
+                              : "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20"
+                          }`}
+                          title="Clique para alternar entre Pago e Pendente"
+                        >
+                          {item.detail === "Pago" ? "Pago ✅" : "Pendente ⏳ (Pagar)"}
+                        </button>
+                      ) : (
+                        item.detail
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-slate-400">{formatDateBR(item.date)}</td>
                     <td
                       className={`py-3 px-4 text-right font-extrabold ${

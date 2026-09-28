@@ -99,6 +99,7 @@ export interface ExtractedItem {
   card?: string | null;
   category?: string;
   date: string;
+  installments?: string;
   status?: "pago" | "pendente";
   selected?: boolean;
 }
