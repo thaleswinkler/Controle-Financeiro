@@ -37,7 +37,6 @@ import { ImprevistosView } from "./components/ImprevistosView";
 import { WhatsAppModal } from "./components/WhatsAppModal";
 import { AiAdvisorModal } from "./components/AiAdvisorModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
-import { AuthModal } from "./components/AuthModal";
 import { MobileSyncModal } from "./components/MobileSyncModal";
 import { MonthAuditorModal } from "./components/MonthAuditorModal";
 import {
@@ -528,7 +527,6 @@ export default function App() {
     getStoredCloudSession()
   );
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isMobileSyncOpen, setIsMobileSyncOpen] = useState(false);
   const [isAuditorOpen, setIsAuditorOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("resumo");
@@ -1855,7 +1853,6 @@ export default function App() {
         data={data}
         currentUser={currentUser}
         isCloudSyncing={isCloudSyncing}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onOpenMobileSyncModal={() => setIsMobileSyncOpen(true)}
         onOpenAuditorModal={() => setIsAuditorOpen(true)}
         onLogout={handleLogout}
@@ -1875,36 +1872,6 @@ export default function App() {
 
       {/* Main Workspace */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8 flex flex-col gap-6">
-        {/* Local Mode Notice Banner */}
-        {!currentUser && (
-          <div className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-slate-900 border border-amber-500/30 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in duration-300">
-            <div className="flex items-start sm:items-center gap-3">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0 mt-1 sm:mt-0 animate-ping" />
-              <div>
-                <p className="text-xs font-bold text-amber-300">
-                  Modo Local Ativo: Seus dados estão salvos apenas neste navegador
-                </p>
-                <p className="text-[11px] text-slate-300">
-                  Para que seus lançamentos apareçam em tempo real no celular e no computador com sincronização contínua, conecte sua conta de nuvem.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setIsAuthModalOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer"
-              >
-                Conectar Nuvem
-              </button>
-              <button
-                onClick={() => setIsMobileSyncOpen(true)}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-all cursor-pointer"
-              >
-                📱 Conectar Celular
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Navigation Tabs Bar */}
         <NavigationTabs
@@ -2001,20 +1968,10 @@ export default function App() {
         onProcessItems={handleProcessExtractedItems}
       />
 
-      <AuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onAuthSuccess={(session) => {
-          setCurrentUser(session);
-          addToast("success", "Sincronização Conectada!", `Bem-vindo de volta, ${session.displayName}.`);
-        }}
-      />
-
       <MobileSyncModal
         isOpen={isMobileSyncOpen}
         onClose={() => setIsMobileSyncOpen(false)}
         currentUser={currentUser}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
       />
 
       <MonthAuditorModal

@@ -29,7 +29,7 @@ interface HeaderProps {
   data: FinancialData;
   currentUser: CloudUserSession | null;
   isCloudSyncing: boolean;
-  onOpenAuthModal: () => void;
+  onOpenAuthModal?: () => void;
   onOpenMobileSyncModal?: () => void;
   onOpenAuditorModal?: () => void;
   onLogout: () => void;
@@ -198,36 +198,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2.5 w-full md:w-auto justify-end flex-wrap sm:flex-nowrap">
-          {/* Cloud Sync / Auth Status */}
-          {currentUser ? (
-            <div className="flex items-center gap-1.5 bg-slate-800/90 border border-emerald-500/30 rounded-xl px-2.5 py-1.5 text-xs text-slate-200">
-              <span className="relative flex h-2 w-2">
-                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isCloudSyncing ? "bg-amber-400" : "bg-emerald-400"} opacity-75`}></span>
-                <span className={`relative inline-flex rounded-full h-2 w-2 ${isCloudSyncing ? "bg-amber-500" : "bg-emerald-500"}`}></span>
-              </span>
-              <span className="text-[11px] text-emerald-400 font-medium truncate max-w-[110px] sm:max-w-[140px]" title={currentUser.email || "Conectado"}>
-                {currentUser.displayName || currentUser.email?.split("@")[0] || "Nuvem Ativa"}
-              </span>
-              <button
-                onClick={onLogout}
-                className="ml-1 p-1 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-700/50 transition-colors"
-                title="Desconectar conta"
-              >
-                <LogOut className="w-3 h-3" />
-              </button>
-            </div>
-          ) : (
-            <button
-              id="btn-cloud-login"
-              onClick={onOpenAuthModal}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700/90 border border-emerald-500/30 text-emerald-400 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm active:scale-95"
-              title="Entrar para sincronizar seus dados em todos os aparelhos"
-            >
-              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Sincronizar Nuvem</span>
-              <span className="sm:hidden">Entrar</span>
-            </button>
-          )}
+          {/* Cloud Sync Status (Single-User Personal System, No Login Required) */}
+          <div className="flex items-center gap-1.5 bg-slate-800/90 border border-emerald-500/30 rounded-xl px-2.5 py-1.5 text-xs text-slate-200 shadow-sm">
+            <span className="relative flex h-2 w-2">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isCloudSyncing ? "bg-amber-400" : "bg-emerald-400"} opacity-75`}></span>
+              <span className={`relative inline-flex rounded-full h-2 w-2 ${isCloudSyncing ? "bg-amber-500" : "bg-emerald-500"}`}></span>
+            </span>
+            <span className="text-[11px] text-emerald-400 font-medium">
+              {isCloudSyncing ? "Sincronizando..." : "Nuvem Conectada"}
+            </span>
+          </div>
 
           {/* Connect Mobile via QR Code */}
           {onOpenMobileSyncModal && (

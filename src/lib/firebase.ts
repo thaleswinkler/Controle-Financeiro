@@ -97,37 +97,15 @@ export const DEFAULT_WORKSPACE_SESSION: CloudUserSession = {
   displayName: "Thales Winkler",
 };
 
-// Check saved user session
+// Always return single-user workspace session without requiring any login
 export function getStoredCloudSession(): CloudUserSession {
-  const fromUrl = checkUrlSyncSession();
-  if (fromUrl) return fromUrl;
-  try {
-    const isExplicitLogout = localStorage.getItem("fin_iq_explicit_logout");
-    if (!isExplicitLogout) {
-      const raw = localStorage.getItem(CLOUD_SESSION_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.uid) return parsed;
-      }
-      // Guarantee user real workspace is active by default across mobile and preview
-      storeCloudSession(DEFAULT_WORKSPACE_SESSION);
-      return DEFAULT_WORKSPACE_SESSION;
-    }
-  } catch (e) {
-    console.error("Erro ao ler sessão salva:", e);
-  }
   return DEFAULT_WORKSPACE_SESSION;
 }
 
-export function storeCloudSession(session: CloudUserSession | null) {
+export function storeCloudSession(_session: CloudUserSession | null) {
   try {
-    if (session) {
-      localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
-      localStorage.removeItem("fin_iq_explicit_logout");
-    } else {
-      localStorage.removeItem(CLOUD_SESSION_KEY);
-      localStorage.setItem("fin_iq_explicit_logout", "true");
-    }
+    localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(DEFAULT_WORKSPACE_SESSION));
+    localStorage.removeItem("fin_iq_explicit_logout");
   } catch (e) {
     console.error("Erro ao salvar sessão:", e);
   }

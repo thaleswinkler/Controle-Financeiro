@@ -18,7 +18,7 @@ interface MobileSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: CloudUserSession | null;
-  onOpenAuthModal: () => void;
+  onOpenAuthModal?: () => void;
 }
 
 export const MobileSyncModal: React.FC<MobileSyncModalProps> = ({
