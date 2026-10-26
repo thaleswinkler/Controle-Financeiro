@@ -51,12 +51,35 @@ export const AiAdvisorModal: React.FC<AiAdvisorModalProps> = ({
         body: JSON.stringify(payload),
       });
 
-      const resData = await res.json();
-      if (resData.success) {
-        setDiagnostic(resData);
+      if (res.ok) {
+        const resData = await res.json();
+        if (resData.success) {
+          setDiagnostic(resData);
+          return;
+        }
       }
+      throw new Error("API indisponível");
     } catch (err) {
-      console.error("Erro ao obter diagnóstico:", err);
+      console.warn("Utilizando diagnóstico financeiro local:", err);
+      const savingsRate = metrics.totalReceita > 0 ? ((metrics.totalInvestimentosMes / metrics.totalReceita) * 100).toFixed(1) : "0";
+      const fixedRatio = metrics.totalReceita > 0 ? ((metrics.totalFixos / metrics.totalReceita) * 100).toFixed(1) : "0";
+      let score = 75;
+      if (parseFloat(fixedRatio) > 55) score -= 15;
+      if (parseFloat(savingsRate) >= 20) score += 15;
+      if (metrics.totalCartoes > metrics.totalReceita * 0.4) score -= 10;
+      if (metrics.totalImprevistos > 500) score -= 5;
+      score = Math.max(10, Math.min(100, score));
+
+      setDiagnostic({
+        score,
+        healthRating: score >= 80 ? "Excelente" : score >= 60 ? "Saudável" : "Requer Atenção",
+        diagnostico: `Suas despesas fixas representam ${fixedRatio}% da sua renda e você está investindo ${savingsRate}% do que ganha neste mês. Seu saldo líquido está ${metrics.saldoMensal >= 0 ? "positivo" : "negativo"}.`,
+        recomendacoes: [
+          `Mantenha os custos fixos abaixo de 50% para aumentar sua flexibilidade financeira.`,
+          `Revise os parcelamentos nos cartões (total de R$ ${metrics.totalCartoes.toFixed(2)}) para evitar juros e comprometimento de renda futura.`,
+          `Priorize fortalecer a reserva de emergência antes de ativos de maior risco se o total investido for menor que 6 meses de gastos fixos.`,
+        ],
+      });
     } finally {
       setLoading(false);
     }

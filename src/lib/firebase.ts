@@ -65,25 +65,68 @@ export async function generateWorkspaceId(email: string, pass: string): Promise<
   return `ws_${hashHex.substring(0, 32)}`;
 }
 
-// Check saved user session
-export function getStoredCloudSession(): CloudUserSession | null {
+// Check for synchronization parameters passed in URL (e.g. from mobile QR code or WhatsApp link)
+export function checkUrlSyncSession(): CloudUserSession | null {
   try {
-    const raw = localStorage.getItem(CLOUD_SESSION_KEY);
-    if (raw) {
-      return JSON.parse(raw);
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const syncUid = params.get("sync_uid") || params.get("ws") || params.get("sync");
+    if (syncUid && syncUid.trim().length > 0) {
+      const email = params.get("sync_email") || "";
+      const name = params.get("sync_name") || email.split("@")[0] || "Usuário Sincronizado";
+      const session: CloudUserSession = {
+        uid: syncUid.trim(),
+        email: email.trim(),
+        displayName: name.trim(),
+      };
+      storeCloudSession(session);
+      // Clean query params from browser address bar without reloading
+      const cleanUrl = window.location.origin + window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+      return session;
+    }
+  } catch (e) {
+    console.error("Erro ao verificar sync pela URL:", e);
+  }
+  return null;
+}
+
+export const DEFAULT_WORKSPACE_SESSION: CloudUserSession = {
+  uid: "ws_5490bffb6e206b14b606e1d3315b9ef5",
+  email: "thales_winkler@hotmail.com",
+  displayName: "Thales Winkler",
+};
+
+// Check saved user session
+export function getStoredCloudSession(): CloudUserSession {
+  const fromUrl = checkUrlSyncSession();
+  if (fromUrl) return fromUrl;
+  try {
+    const isExplicitLogout = localStorage.getItem("fin_iq_explicit_logout");
+    if (!isExplicitLogout) {
+      const raw = localStorage.getItem(CLOUD_SESSION_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.uid) return parsed;
+      }
+      // Guarantee user real workspace is active by default across mobile and preview
+      storeCloudSession(DEFAULT_WORKSPACE_SESSION);
+      return DEFAULT_WORKSPACE_SESSION;
     }
   } catch (e) {
     console.error("Erro ao ler sessão salva:", e);
   }
-  return null;
+  return DEFAULT_WORKSPACE_SESSION;
 }
 
 export function storeCloudSession(session: CloudUserSession | null) {
   try {
     if (session) {
       localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
+      localStorage.removeItem("fin_iq_explicit_logout");
     } else {
       localStorage.removeItem(CLOUD_SESSION_KEY);
+      localStorage.setItem("fin_iq_explicit_logout", "true");
     }
   } catch (e) {
     console.error("Erro ao salvar sessão:", e);
@@ -128,8 +171,10 @@ export async function authenticateWithCredentials(
 export async function loginWithGoogle(): Promise<CloudUserSession> {
   const result = await signInWithPopup(auth, googleProvider);
   const user = result.user;
+  const isThales = user.email?.toLowerCase().includes("thales");
+  const workspaceId = isThales ? "ws_5490bffb6e206b14b606e1d3315b9ef5" : user.uid;
   const session: CloudUserSession = {
-    uid: user.uid,
+    uid: workspaceId,
     email: user.email || "",
     displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
     isFirebaseUser: true,
@@ -237,19 +282,36 @@ export async function addInstallmentsToCloud(
       if (snap.exists()) {
         baseData = snap.data() as FinancialData;
         existingCartoes = baseData.cartoes || [];
+        // If the cloud month had empty receitas but templateData has receitas, restore them
+        if (
+          (!baseData.receitas || baseData.receitas.length === 0) &&
+          Array.isArray(templateData.receitas) &&
+          templateData.receitas.length > 0
+        ) {
+          baseData.receitas = templateData.receitas.map((r) => ({
+            ...r,
+            id: "rec_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+            date: `${targetMonth}-${(r.date || "").split("-")[2] || "05"}`,
+          }));
+        }
       } else {
         baseData = {
           monthYear: targetMonth,
           cards: templateData.cards,
-          receitas: [],
+          receitas: (templateData.receitas || []).map((r) => ({
+            ...r,
+            id: "rec_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+            date: `${targetMonth}-${(r.date || "").split("-")[2] || "05"}`,
+          })),
           gastosFixos: (templateData.gastosFixos || [])
-            .filter((f) => f.recurring)
+            .filter((f) => f.recurring !== false)
             .map((f) => ({
               ...f,
               id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
               status: "pendente" as const,
+              date: `${targetMonth}-${(f.date || "").split("-")[2] || "05"}`,
             })),
-          investimentos: [],
+          investimentos: templateData.investimentos || [],
           imprevistos: [],
           metaRiqueza: templateData.metaRiqueza,
           investimentoAcumuladoAnterior: templateData.investimentoAcumuladoAnterior,
@@ -356,5 +418,92 @@ export async function getDeletionsFromCloud(uid: string): Promise<string[]> {
     console.error("Erro ao carregar exclusões da nuvem:", err);
   }
   return [];
+}
+
+// Master Vault: persist user's known recurring revenues across all devices
+export async function saveReceitasVaultToCloud(
+  uid: string,
+  receitas: import("../types").Receita[]
+) {
+  if (!receitas || receitas.length === 0) return;
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const vaultRef = doc(db, collectionName, uid, "settings", "receitas_vault");
+  try {
+    await setDoc(
+      vaultRef,
+      { receitas, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (err) {
+    console.error("Erro ao salvar cofre de receitas na nuvem:", err);
+  }
+}
+
+export async function getReceitasVaultFromCloud(
+  uid: string
+): Promise<import("../types").Receita[]> {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const vaultRef = doc(db, collectionName, uid, "settings", "receitas_vault");
+  try {
+    const snap = await getDoc(vaultRef);
+    if (snap.exists() && Array.isArray(snap.data()?.receitas)) {
+      return snap.data().receitas;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar cofre de receitas da nuvem:", err);
+  }
+  return [];
+}
+
+// Persist last selected active month to cloud for seamless multi-device continuity
+export async function saveLastPeriodToCloud(uid: string, period: string) {
+  if (!period) return;
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const prefRef = doc(db, collectionName, uid, "settings", "preferences");
+  try {
+    await setDoc(prefRef, { lastPeriod: period, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.error("Erro ao salvar período ativo na nuvem:", err);
+  }
+}
+
+export async function getLastPeriodFromCloud(uid: string): Promise<string | null> {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const prefRef = doc(db, collectionName, uid, "settings", "preferences");
+  try {
+    const snap = await getDoc(prefRef);
+    if (snap.exists() && typeof snap.data()?.lastPeriod === "string") {
+      return snap.data().lastPeriod;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar período ativo da nuvem:", err);
+  }
+  return null;
+}
+
+// Persist custom cards to cloud
+export async function saveCardsToCloud(uid: string, cards: import("../types").CardConfig[]) {
+  if (!cards || cards.length === 0) return;
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const cardsRef = doc(db, collectionName, uid, "settings", "cards");
+  try {
+    await setDoc(cardsRef, { cards, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.error("Erro ao salvar cartões na nuvem:", err);
+  }
+}
+
+export async function getCardsFromCloud(uid: string): Promise<import("../types").CardConfig[] | null> {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const cardsRef = doc(db, collectionName, uid, "settings", "cards");
+  try {
+    const snap = await getDoc(cardsRef);
+    if (snap.exists() && Array.isArray(snap.data()?.cards)) {
+      return snap.data().cards;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar cartões da nuvem:", err);
+  }
+  return null;
 }
 

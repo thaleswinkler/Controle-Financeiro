@@ -16,6 +16,9 @@ import {
   LogOut,
   LogIn,
   CheckCircle2,
+  Smartphone,
+  QrCode,
+  History,
 } from "lucide-react";
 import { FinancialData } from "../types";
 import { exportToCSV } from "../utils/formatters";
@@ -27,6 +30,8 @@ interface HeaderProps {
   currentUser: CloudUserSession | null;
   isCloudSyncing: boolean;
   onOpenAuthModal: () => void;
+  onOpenMobileSyncModal?: () => void;
+  onOpenAuditorModal?: () => void;
   onLogout: () => void;
   onOpenWhatsAppModal: () => void;
   onOpenAdvisorModal: () => void;
@@ -34,7 +39,10 @@ interface HeaderProps {
   onImportJSON: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onResetData: () => void;
   onReplicateFixedExpenses: () => void;
+  onReplicateFromPreviousMonth?: () => void;
   onReplicateInvestments?: () => void;
+  onReplicateReceitasAllMonths?: () => void;
+  onRestoreReceitas?: () => void;
   selectedPeriod: string;
   onSelectPeriod: (period: string) => void;
 }
@@ -44,6 +52,8 @@ export const Header: React.FC<HeaderProps> = ({
   currentUser,
   isCloudSyncing,
   onOpenAuthModal,
+  onOpenMobileSyncModal,
+  onOpenAuditorModal,
   onLogout,
   onOpenWhatsAppModal,
   onOpenAdvisorModal,
@@ -51,7 +61,10 @@ export const Header: React.FC<HeaderProps> = ({
   onImportJSON,
   onResetData,
   onReplicateFixedExpenses,
+  onReplicateFromPreviousMonth,
   onReplicateInvestments,
+  onReplicateReceitasAllMonths,
+  onRestoreReceitas,
   selectedPeriod,
   onSelectPeriod,
 }) => {
@@ -171,6 +184,15 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <ChevronRight className="w-4 h-4" />
             </button>
+            {onOpenAuditorModal && (
+              <button
+                onClick={onOpenAuditorModal}
+                title="Auditoria de Meses: ver saldos e lançamentos de todos os meses"
+                className="p-1 text-indigo-400 hover:text-indigo-300 hover:bg-slate-700/60 rounded-lg transition-colors cursor-pointer border-l border-slate-700/80 pl-1.5 ml-0.5"
+              >
+                <History className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -204,6 +226,19 @@ export const Header: React.FC<HeaderProps> = ({
               <Cloud className="w-3.5 h-3.5 text-emerald-400" />
               <span className="hidden sm:inline">Sincronizar Nuvem</span>
               <span className="sm:hidden">Entrar</span>
+            </button>
+          )}
+
+          {/* Connect Mobile via QR Code */}
+          {onOpenMobileSyncModal && (
+            <button
+              id="btn-mobile-sync"
+              onClick={onOpenMobileSyncModal}
+              className="px-2.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700 text-slate-200 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm hover:border-cyan-500/40 active:scale-95 cursor-pointer"
+              title="Abrir no celular via QR Code ou Link"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">📱 Celular</span>
             </button>
           )}
 
@@ -279,7 +314,33 @@ export const Header: React.FC<HeaderProps> = ({
                   />
                 </label>
 
+                {onOpenAuditorModal && (
+                  <button
+                    onClick={() => {
+                      onOpenAuditorModal();
+                      setDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 text-indigo-300 hover:text-indigo-200 transition-colors"
+                  >
+                    <History className="w-4 h-4 text-indigo-400" />
+                    <span>Auditoria de Meses & Saldos</span>
+                  </button>
+                )}
+
                 <hr className="border-slate-800 my-1" />
+
+                {onReplicateFromPreviousMonth && (
+                  <button
+                    onClick={() => {
+                      onReplicateFromPreviousMonth();
+                      setDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 text-indigo-300 hover:text-indigo-200 transition-colors"
+                  >
+                    <CopyPlus className="w-4 h-4 text-indigo-400" />
+                    <span>Copiar Fixos do Mês Anterior</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => {
@@ -291,6 +352,32 @@ export const Header: React.FC<HeaderProps> = ({
                   <CopyPlus className="w-4 h-4 text-indigo-400" />
                   <span>Replicar Fixos para Próx. Mês</span>
                 </button>
+
+                {onReplicateReceitasAllMonths && (
+                  <button
+                    onClick={() => {
+                      onReplicateReceitasAllMonths();
+                      setDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 text-emerald-300 hover:text-emerald-200 transition-colors"
+                  >
+                    <CopyPlus className="w-4 h-4 text-emerald-400" />
+                    <span>Replicar Receitas em Todos os Meses</span>
+                  </button>
+                )}
+
+                {onRestoreReceitas && (
+                  <button
+                    onClick={() => {
+                      onRestoreReceitas();
+                      setDropdownOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 hover:bg-slate-800 flex items-center gap-2.5 text-amber-300 hover:text-amber-200 transition-colors"
+                  >
+                    <RotateCcw className="w-4 h-4 text-amber-400" />
+                    <span>Recuperar Receitas Salvas</span>
+                  </button>
+                )}
 
                 {onReplicateInvestments && (
                   <button

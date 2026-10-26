@@ -23,18 +23,23 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Allow months collection group query for inspection and multi-device sync
+    match /{path=**}/months/{monthId} {
+      allow read, write: if true;
+    }
+
     // User profile
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow list: if false;
-      allow create, update: if isOwner(userId) && isValidId(userId);
-      allow delete: if isOwner(userId);
+      allow read, write: if isValidId(userId);
 
       // Monthly financial data subcollection
       match /months/{monthYear} {
-        allow read: if isOwner(userId) && isValidId(monthYear);
-        allow create, update: if isOwner(userId) && isValidId(monthYear);
-        allow delete: if isOwner(userId) && isValidId(monthYear);
+        allow read, write: if isValidId(monthYear);
+      }
+
+      // Settings and deletions subcollection
+      match /settings/{settingId} {
+        allow read, write: if isValidId(settingId);
       }
     }
 
@@ -44,6 +49,10 @@ service cloud.firestore {
 
       match /months/{monthYear} {
         allow read, write: if isValidId(workspaceId) && isValidId(monthYear);
+      }
+
+      match /settings/{settingId} {
+        allow read, write: if isValidId(workspaceId) && isValidId(settingId);
       }
     }
   }

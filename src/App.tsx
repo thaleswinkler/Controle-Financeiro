@@ -38,6 +38,8 @@ import { WhatsAppModal } from "./components/WhatsAppModal";
 import { AiAdvisorModal } from "./components/AiAdvisorModal";
 import { ToastContainer, ToastMessage } from "./components/Toast";
 import { AuthModal } from "./components/AuthModal";
+import { MobileSyncModal } from "./components/MobileSyncModal";
+import { MonthAuditorModal } from "./components/MonthAuditorModal";
 import {
   auth,
   subscribeToMonthData,
@@ -47,6 +49,12 @@ import {
   getAllUserMonthsFromCloud,
   saveDeletionsToCloud,
   getDeletionsFromCloud,
+  saveReceitasVaultToCloud,
+  getReceitasVaultFromCloud,
+  saveLastPeriodToCloud,
+  getLastPeriodFromCloud,
+  saveCardsToCloud,
+  getCardsFromCloud,
   getStoredCloudSession,
   logoutUser,
   CloudUserSession,
@@ -57,6 +65,331 @@ const GLOBAL_CARDS_KEY = "fin_iq_cards_config_v2";
 const STORAGE_KEY = "fin_iq_pro_data_v2";
 const DELETED_KEYS_STORAGE = "fin_iq_deleted_expenses_v2";
 const LAST_PERIOD_KEY = "fin_iq_last_selected_period";
+const MASTER_RECEITAS_VAULT_KEY = "fin_iq_master_receitas_vault_v2";
+
+export function getPreviousMonth(monthYear: string): string {
+  const [y, m] = monthYear.split("-").map(Number);
+  let py = y;
+  let pm = m - 1;
+  if (pm < 1) {
+    py--;
+    pm = 12;
+  }
+  return `${py}-${String(pm).padStart(2, "0")}`;
+}
+
+export function getNextMonth(monthYear: string): string {
+  const [y, m] = monthYear.split("-").map(Number);
+  let ny = y;
+  let nm = m + 1;
+  if (nm > 12) {
+    ny++;
+    nm = 1;
+  }
+  return `${ny}-${String(nm).padStart(2, "0")}`;
+}
+
+// Load configured cards globally so changes apply across all months
+export const loadStoredCards = (): CardConfig[] => {
+  try {
+    const savedCards = localStorage.getItem(GLOBAL_CARDS_KEY);
+    if (savedCards) {
+      if (
+        savedCards.includes("Ourocard") ||
+        savedCards.includes("5000") ||
+        savedCards.includes("8000")
+      ) {
+        localStorage.removeItem(GLOBAL_CARDS_KEY);
+        return INITIAL_DATA.cards;
+      }
+      const parsed = JSON.parse(savedCards);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {}
+  return INITIAL_DATA.cards;
+};
+
+function getStoredReceitasVault(): Receita[] {
+  try {
+    const raw = localStorage.getItem(MASTER_RECEITAS_VAULT_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) return arr;
+    }
+  } catch {}
+  return [];
+}
+
+function saveReceitasToVault(receitas: Receita[], uid?: string) {
+  if (!receitas || receitas.length === 0) return;
+  try {
+    localStorage.setItem(MASTER_RECEITAS_VAULT_KEY, JSON.stringify(receitas));
+    if (uid) {
+      saveReceitasVaultToCloud(uid, receitas).catch(console.error);
+    }
+  } catch {}
+}
+
+/**
+ * Finds the closest prior or any saved month that contains user data (receitas or gastos fixos)
+ * to replicate as the starting baseline for a new month.
+ */
+function findPriorSourceMonth(targetMonth: string): FinancialData | null {
+  // 1. Check immediate previous month
+  const prev = getPreviousMonth(targetMonth);
+  try {
+    const rawPrev = localStorage.getItem(`fin_iq_month_${prev}`);
+    if (rawPrev) {
+      const parsed = JSON.parse(rawPrev);
+      if (
+        (Array.isArray(parsed?.receitas) && parsed.receitas.length > 0) ||
+        (Array.isArray(parsed?.gastosFixos) && parsed.gastosFixos.length > 0)
+      ) {
+        return parsed;
+      }
+    }
+  } catch {}
+
+  // 2. Scan all saved months in localStorage prior to targetMonth (most recent first)
+  try {
+    const candidateMonths: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("fin_iq_month_")) {
+        const m = key.replace("fin_iq_month_", "");
+        if (/^\d{4}-\d{2}$/.test(m) && m < targetMonth) {
+          candidateMonths.push(m);
+        }
+      }
+    }
+    candidateMonths.sort((a, b) => b.localeCompare(a));
+    for (const m of candidateMonths) {
+      const raw = localStorage.getItem(`fin_iq_month_${m}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          (Array.isArray(parsed?.receitas) && parsed.receitas.length > 0) ||
+          (Array.isArray(parsed?.gastosFixos) && parsed.gastosFixos.length > 0)
+        ) {
+          return parsed;
+        }
+      }
+    }
+
+    // 3. Any other month with data (e.g. October if current is November, or vice-versa)
+    const anyMonths: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("fin_iq_month_")) {
+        const m = key.replace("fin_iq_month_", "");
+        if (/^\d{4}-\d{2}$/.test(m) && m !== targetMonth) {
+          anyMonths.push(m);
+        }
+      }
+    }
+    anyMonths.sort((a, b) => b.localeCompare(a));
+    for (const m of anyMonths) {
+      const raw = localStorage.getItem(`fin_iq_month_${m}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          (Array.isArray(parsed?.receitas) && parsed.receitas.length > 0) ||
+          (Array.isArray(parsed?.gastosFixos) && parsed.gastosFixos.length > 0)
+        ) {
+          return parsed;
+        }
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Ensures any month always has user revenues replicated from the closest source month or vault.
+ * All replicated items receive new unique IDs for targetMonthYear so editing values never affects the source month!
+ */
+export function ensureMonthReceitas(
+  targetMonthYear: string,
+  currentReceitas?: Receita[]
+): Receita[] {
+  if (Array.isArray(currentReceitas) && currentReceitas.length > 0) {
+    return currentReceitas;
+  }
+
+  // 1. Try immediate previous month
+  const prevMonth = getPreviousMonth(targetMonthYear);
+  try {
+    const rawPrev = localStorage.getItem(`fin_iq_month_${prevMonth}`);
+    if (rawPrev) {
+      const parsed = JSON.parse(rawPrev);
+      if (Array.isArray(parsed?.receitas) && parsed.receitas.length > 0) {
+        return parsed.receitas.map((r: Receita, idx: number) => ({
+          ...r,
+          id: `rec_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          date: `${targetMonthYear}-${(r.date || "").split("-")[2] || "05"}`,
+        }));
+      }
+    }
+  } catch {}
+
+  // 2. Try findPriorSourceMonth
+  const prior = findPriorSourceMonth(targetMonthYear);
+  if (prior && Array.isArray(prior.receitas) && prior.receitas.length > 0) {
+    return prior.receitas.map((r: Receita, idx: number) => ({
+      ...r,
+      id: `rec_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: `${targetMonthYear}-${(r.date || "").split("-")[2] || "05"}`,
+    }));
+  }
+
+  // 3. Try master vault
+  const vault = getStoredReceitasVault();
+  if (vault.length > 0) {
+    return vault.map((r: Receita, idx: number) => ({
+      ...r,
+      id: `rec_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: `${targetMonthYear}-${(r.date || "").split("-")[2] || "05"}`,
+    }));
+  }
+
+  return [];
+}
+
+/**
+ * Ensures any month always has recurring fixed expenses replicated from the closest source month.
+ * All replicated items receive new unique IDs for targetMonthYear with status="pendente".
+ * Editing amounts or paying bills in targetMonthYear will NEVER affect other months!
+ */
+export function ensureMonthGastosFixos(
+  targetMonthYear: string,
+  currentFixos?: GastoFixo[]
+): GastoFixo[] {
+  if (Array.isArray(currentFixos) && currentFixos.length > 0) {
+    return currentFixos;
+  }
+
+  // 1. Try immediate previous month
+  const prevMonth = getPreviousMonth(targetMonthYear);
+  try {
+    const rawPrev = localStorage.getItem(`fin_iq_month_${prevMonth}`);
+    if (rawPrev) {
+      const parsed = JSON.parse(rawPrev);
+      if (Array.isArray(parsed?.gastosFixos) && parsed.gastosFixos.length > 0) {
+        return parsed.gastosFixos
+          .filter((f: GastoFixo) => f.recurring !== false)
+          .map((f: GastoFixo, idx: number) => ({
+            ...f,
+            id: `fix_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            status: "pendente" as const,
+            date: `${targetMonthYear}-${(f.date || "").split("-")[2] || "05"}`,
+          }));
+      }
+    }
+  } catch {}
+
+  // 2. Try findPriorSourceMonth
+  const prior = findPriorSourceMonth(targetMonthYear);
+  if (prior && Array.isArray(prior.gastosFixos) && prior.gastosFixos.length > 0) {
+    return prior.gastosFixos
+      .filter((f: GastoFixo) => f.recurring !== false)
+      .map((f: GastoFixo, idx: number) => ({
+        ...f,
+        id: `fix_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        status: "pendente" as const,
+        date: `${targetMonthYear}-${(f.date || "").split("-")[2] || "05"}`,
+      }));
+  }
+
+  return [];
+}
+
+/**
+ * Builds a clean baseline for a new month by replicating recurring fixed expenses,
+ * revenues, and investments from a source month.
+ * Every replicated item receives an independent unique ID for the new month,
+ * so editing any amount in this new month NEVER affects the source month!
+ */
+export function buildReplicatedMonthBaseline(
+  targetMonthYear: string,
+  source: FinancialData | null
+): FinancialData {
+  const cards = loadStoredCards();
+
+  if (!source) {
+    const replicatedRecs = ensureMonthReceitas(targetMonthYear);
+    const replicatedFixos = ensureMonthGastosFixos(targetMonthYear);
+    return {
+      monthYear: targetMonthYear,
+      cards,
+      receitas: replicatedRecs,
+      gastosFixos: replicatedFixos,
+      cartoes: [],
+      investimentos: [],
+      imprevistos: [],
+      metaRiqueza: 100000,
+      investimentoAcumuladoAnterior: 0,
+    };
+  }
+
+  // Replicate Gastos Fixos with status pendente and new unique IDs for targetMonth
+  const rawFixos = source.gastosFixos || [];
+  const replicatedFixos: GastoFixo[] = (rawFixos.length > 0
+    ? rawFixos.filter((f) => f.recurring !== false)
+    : ensureMonthGastosFixos(targetMonthYear)
+  ).map((f, idx) => {
+    const day = (f.date || "").split("-")[2] || "05";
+    return {
+      ...f,
+      id: `fix_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      status: "pendente" as const,
+      date: `${targetMonthYear}-${day}`,
+    };
+  });
+
+  // Replicate Receitas with new unique IDs for targetMonth
+  const rawReceitas = source.receitas || [];
+  const replicatedReceitas: Receita[] = (rawReceitas.length > 0
+    ? rawReceitas
+    : ensureMonthReceitas(targetMonthYear)
+  ).map((r, idx) => {
+    const day = (r.date || "").split("-")[2] || "05";
+    return {
+      ...r,
+      id: `rec_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: `${targetMonthYear}-${day}`,
+    };
+  });
+
+  // Replicate Investimentos with new unique IDs for targetMonth
+  const replicatedInvestimentos: Investimento[] = (source.investimentos || []).map((inv, idx) => {
+    const day = (inv.date || "").split("-")[2] || "10";
+    return {
+      ...inv,
+      id: `inv_${targetMonthYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: `${targetMonthYear}-${day}`,
+    };
+  });
+
+  const totalAportesSource = (source.investimentos || []).reduce(
+    (acc, i) => acc + (Number(i.amount) || 0),
+    0
+  );
+
+  return {
+    monthYear: targetMonthYear,
+    cards: source.cards || cards,
+    receitas: replicatedReceitas,
+    gastosFixos: replicatedFixos,
+    cartoes: [],
+    investimentos: replicatedInvestimentos,
+    imprevistos: [],
+    metaRiqueza: source.metaRiqueza || 100000,
+    investimentoAcumuladoAnterior: (source.investimentoAcumuladoAnterior || 0) + totalAportesSource,
+  };
+}
 
 function getDeletedExpenseKeys(): Set<string> {
   try {
@@ -84,7 +417,40 @@ function recordDeletedExpenseKeys(keys: string[], uid?: string) {
   } catch {}
 }
 
+function isLegacyMockData(raw: any): boolean {
+  if (!raw) return false;
+  const str = typeof raw === "string" ? raw : JSON.stringify(raw);
+  return (
+    str.includes("Aluguel & Condomínio") ||
+    str.includes("Pão de Açúcar") ||
+    str.includes("Posto Ipiranga") ||
+    str.includes("Outback") ||
+    str.includes("Salário Mensal (CLT)")
+  );
+}
+
+function purgeLegacyMockStorage() {
+  try {
+    const toRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("fin_iq_")) {
+        const val = localStorage.getItem(k);
+        if (val && isLegacyMockData(val)) {
+          toRemove.push(k);
+        }
+      }
+    }
+    for (const k of toRemove) {
+      localStorage.removeItem(k);
+    }
+  } catch {}
+}
+
 export default function App() {
+  // Purge any legacy mock entries on load
+  purgeLegacyMockStorage();
+
   // Reference month is dynamically initialized to the upcoming month (e.g. 2026-10)
   // or user's last remembered period
   const [selectedPeriod, setSelectedPeriod] = useState<string>(() => {
@@ -97,20 +463,6 @@ export default function App() {
     return getDefaultReferenceMonth();
   });
 
-  // Load configured cards globally so changes apply across all months
-  const loadStoredCards = (): CardConfig[] => {
-    try {
-      const savedCards = localStorage.getItem(GLOBAL_CARDS_KEY);
-      if (savedCards) {
-        const parsed = JSON.parse(savedCards);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return INITIAL_DATA.cards;
-  };
-
   const [data, setData] = useState<FinancialData>(() => {
     const initialPeriod = (() => {
       try {
@@ -121,37 +473,55 @@ export default function App() {
     })();
 
     try {
-      // First check month-specific storage for initialPeriod
+      // 1. Check if the initialPeriod has already been saved by the user
       const monthSpecific = localStorage.getItem(`fin_iq_month_${initialPeriod}`);
-      if (monthSpecific) {
+      if (monthSpecific && !isLegacyMockData(monthSpecific)) {
         const parsed = JSON.parse(monthSpecific);
-        if (parsed && Array.isArray(parsed.cartoes)) {
+        if (parsed && parsed.monthYear === initialPeriod) {
+          const validReceitas = ensureMonthReceitas(initialPeriod, parsed.receitas);
+          const validFixos = ensureMonthGastosFixos(initialPeriod, parsed.gastosFixos);
           return {
-            ...INITIAL_DATA,
             ...parsed,
-            monthYear: initialPeriod,
+            receitas: validReceitas,
+            gastosFixos: validFixos,
             cards: loadStoredCards(),
           };
         }
       }
 
-      // Check legacy single storage key
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && Array.isArray(parsed.receitas) && Array.isArray(parsed.cartoes)) {
-          return {
-            ...INITIAL_DATA,
-            ...parsed,
-            monthYear: initialPeriod,
-            cards: loadStoredCards(),
-          };
-        }
+      // 2. Look for any prior source month to replicate from
+      const sourceMonth = findPriorSourceMonth(initialPeriod);
+      if (sourceMonth) {
+        const newBaseline = buildReplicatedMonthBaseline(initialPeriod, sourceMonth);
+        try {
+          localStorage.setItem(`fin_iq_month_${initialPeriod}`, JSON.stringify(newBaseline));
+        } catch {}
+        return newBaseline;
       }
+
+      // 3. Fallback for brand-new empty app startup
+      const initial = {
+        ...INITIAL_DATA,
+        monthYear: initialPeriod,
+        receitas: ensureMonthReceitas(initialPeriod, INITIAL_DATA.receitas),
+        gastosFixos: ensureMonthGastosFixos(initialPeriod, INITIAL_DATA.gastosFixos),
+        cards: loadStoredCards(),
+      };
+      try {
+        localStorage.setItem(`fin_iq_month_${initialPeriod}`, JSON.stringify(initial));
+      } catch {}
+      return initial;
     } catch (e) {
       console.error("Erro ao carregar dados do localStorage:", e);
     }
-    return { ...INITIAL_DATA, monthYear: initialPeriod, cards: loadStoredCards() };
+
+    return {
+      ...INITIAL_DATA,
+      monthYear: initialPeriod,
+      receitas: ensureMonthReceitas(initialPeriod, INITIAL_DATA.receitas),
+      gastosFixos: ensureMonthGastosFixos(initialPeriod, INITIAL_DATA.gastosFixos),
+      cards: loadStoredCards(),
+    };
   });
 
   const [currentUser, setCurrentUser] = useState<CloudUserSession | null>(() =>
@@ -159,6 +529,8 @@ export default function App() {
   );
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isMobileSyncOpen, setIsMobileSyncOpen] = useState(false);
+  const [isAuditorOpen, setIsAuditorOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>("resumo");
   const [isWhatsAppOpen, setIsWhatsAppOpen] = useState(false);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
@@ -170,12 +542,57 @@ export default function App() {
     dataRef.current = data;
   }, [data]);
 
+  // Self-healing check: if active month is opened with 0 receitas or 0 gastos fixos,
+  // automatically replicate them from prior months or vault so November is NEVER blank!
+  useEffect(() => {
+    setData((current) => {
+      let changed = false;
+      let healedReceitas = current.receitas || [];
+      let healedFixos = current.gastosFixos || [];
+
+      if (healedReceitas.length === 0) {
+        const found = ensureMonthReceitas(selectedPeriod, healedReceitas);
+        if (found.length > 0) {
+          healedReceitas = found;
+          changed = true;
+        }
+      }
+
+      if (healedFixos.length === 0) {
+        const found = ensureMonthGastosFixos(selectedPeriod, healedFixos);
+        if (found.length > 0) {
+          healedFixos = found;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        const updated: FinancialData = {
+          ...current,
+          monthYear: selectedPeriod,
+          receitas: healedReceitas,
+          gastosFixos: healedFixos,
+        };
+        try {
+          localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(updated));
+        } catch {}
+        if (currentUser) {
+          saveMonthDataToCloud(currentUser.uid, selectedPeriod, updated).catch(console.error);
+        }
+        return updated;
+      }
+      return current;
+    });
+  }, [selectedPeriod, currentUser]);
+
   // Listen to Firebase Auth state if signed in via Google
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
+        const isThales = user.email?.toLowerCase().includes("thales");
+        const workspaceId = isThales ? "ws_5490bffb6e206b14b606e1d3315b9ef5" : user.uid;
         const session: CloudUserSession = {
-          uid: user.uid,
+          uid: workspaceId,
           email: user.email || "",
           displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
           isFirebaseUser: true,
@@ -202,17 +619,94 @@ export default function App() {
       })
       .catch(console.error);
 
+    getReceitasVaultFromCloud(currentUser.uid)
+      .then((cloudRecs) => {
+        if (cloudRecs && cloudRecs.length > 0) {
+          saveReceitasToVault(cloudRecs);
+          setData((prev) => {
+            if (!prev.receitas || prev.receitas.length === 0) {
+              const restored = cloudRecs.map((r) => ({
+                ...r,
+                date: `${selectedPeriod}-${(r.date || "").split("-")[2] || "05"}`,
+              }));
+              return { ...prev, receitas: restored };
+            }
+            return prev;
+          });
+        }
+      })
+      .catch(console.error);
+
+    // Sync cloud cards
+    getCardsFromCloud(currentUser.uid)
+      .then((cloudCards) => {
+        if (cloudCards && cloudCards.length > 0) {
+          try {
+            localStorage.setItem(GLOBAL_CARDS_KEY, JSON.stringify(cloudCards));
+          } catch {}
+          setData((prev) => ({ ...prev, cards: cloudCards }));
+        }
+      })
+      .catch(console.error);
+
+    // Sync last selected active month so mobile opens the exact same period as desktop!
+    getLastPeriodFromCloud(currentUser.uid)
+      .then((cloudPeriod) => {
+        if (cloudPeriod && /^\d{4}-\d{2}$/.test(cloudPeriod) && cloudPeriod !== selectedPeriod) {
+          setSelectedPeriod(cloudPeriod);
+        }
+      })
+      .catch(console.error);
+
     getAllUserMonthsFromCloud(currentUser.uid)
       .then((cloudMonths) => {
         if (cloudMonths && cloudMonths.length > 0) {
           for (const mData of cloudMonths) {
+            if (Array.isArray(mData?.receitas) && mData.receitas.length > 0) {
+              saveReceitasToVault(mData.receitas);
+              break;
+            }
+          }
+          for (const mData of cloudMonths) {
             if (mData.monthYear) {
               const localKey = `fin_iq_month_${mData.monthYear}`;
               const localRaw = localStorage.getItem(localKey);
-              if (!localRaw) {
+              let shouldSave = !localRaw;
+              if (localRaw) {
+                try {
+                  const parsedLocal = JSON.parse(localRaw);
+                  const localCount =
+                    (parsedLocal.receitas?.length || 0) +
+                    (parsedLocal.gastosFixos?.length || 0) +
+                    (parsedLocal.cartoes?.length || 0);
+                  const cloudCount =
+                    (mData.receitas?.length || 0) +
+                    (mData.gastosFixos?.length || 0) +
+                    (mData.cartoes?.length || 0);
+                  if (cloudCount >= localCount) {
+                    shouldSave = true;
+                  }
+                } catch {
+                  shouldSave = true;
+                }
+              }
+              if (shouldSave) {
                 try {
                   localStorage.setItem(localKey, JSON.stringify(mData));
                 } catch {}
+              }
+              if (mData.monthYear === selectedPeriod) {
+                setData((prev) => {
+                  const cloudCount =
+                    (mData.receitas?.length || 0) +
+                    (mData.gastosFixos?.length || 0) +
+                    (mData.cartoes?.length || 0);
+                  const prevCount =
+                    (prev.receitas?.length || 0) +
+                    (prev.gastosFixos?.length || 0) +
+                    (prev.cartoes?.length || 0);
+                  return cloudCount >= prevCount ? mData : prev;
+                });
               }
             }
           }
@@ -241,6 +735,13 @@ export default function App() {
         );
         const projectedForThisMonth = projectedMap[selectedPeriod] || [];
 
+        // Check local storage for selectedPeriod
+        let localData: FinancialData | null = null;
+        try {
+          const rawLocal = localStorage.getItem(`fin_iq_month_${selectedPeriod}`);
+          if (rawLocal) localData = JSON.parse(rawLocal);
+        } catch {}
+
         if (remoteData && remoteData.monthYear === selectedPeriod) {
           // Filter out any cartoes matching deleted keys or signatures
           const filteredCartoes = (remoteData.cartoes || []).filter((c) => {
@@ -256,23 +757,47 @@ export default function App() {
             deletedKeys
           );
 
-          // Ensure fixed expenses are present: if remote has none, inherit from current state
-          const finalFixed =
+          // DO NOT let empty remote arrays overwrite user's entries: auto-replicate if needed!
+          let finalReceitas =
+            Array.isArray(remoteData.receitas) && remoteData.receitas.length > 0
+              ? remoteData.receitas
+              : localData && Array.isArray(localData.receitas) && localData.receitas.length > 0
+              ? localData.receitas
+              : dataRef.current.receitas;
+
+          if (!finalReceitas || finalReceitas.length === 0) {
+            finalReceitas = ensureMonthReceitas(selectedPeriod);
+          }
+
+          if (finalReceitas.length > 0) {
+            saveReceitasToVault(finalReceitas, currentUser.uid);
+          }
+
+          let finalFixed =
             Array.isArray(remoteData.gastosFixos) && remoteData.gastosFixos.length > 0
               ? remoteData.gastosFixos
-              : dataRef.current.gastosFixos.length > 0
-              ? dataRef.current.gastosFixos.map((f) => ({
-                  ...f,
-                  status: "pendente" as const,
-                  date: `${selectedPeriod}-${(f.date || "").split("-")[2] || "05"}`,
-                }))
-              : INITIAL_DATA.gastosFixos;
+              : localData && Array.isArray(localData.gastosFixos) && localData.gastosFixos.length > 0
+              ? localData.gastosFixos
+              : dataRef.current.gastosFixos;
+
+          if (!finalFixed || finalFixed.length === 0) {
+            finalFixed = ensureMonthGastosFixos(selectedPeriod);
+          }
+
+          const finalInvestimentos =
+            Array.isArray(remoteData.investimentos) && remoteData.investimentos.length > 0
+              ? remoteData.investimentos
+              : localData && Array.isArray(localData.investimentos) && localData.investimentos.length > 0
+              ? localData.investimentos
+              : dataRef.current.investimentos;
 
           const finalData: FinancialData = {
             ...remoteData,
             monthYear: selectedPeriod,
+            receitas: finalReceitas,
             cartoes: mergedCartoes,
             gastosFixos: finalFixed,
+            investimentos: finalInvestimentos,
             cards:
               Array.isArray(remoteData.cards) && remoteData.cards.length > 0
                 ? remoteData.cards
@@ -281,18 +806,35 @@ export default function App() {
           setData(finalData);
           try {
             localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(finalData));
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(finalData));
           } catch {}
-        } else if (remoteData === null) {
-          // If month doesn't exist on cloud yet, create clean baseline WITH projected installments for this month
-          const newBaseline = buildNewMonthBaseline(selectedPeriod, dataRef.current);
-          if (projectedForThisMonth.length > 0) {
-            newBaseline.cartoes = projectedForThisMonth;
+
+          // If local/replicated data had items that cloud was missing, sync back to cloud
+          const remoteWasMissing =
+            (!remoteData.receitas || remoteData.receitas.length === 0) ||
+            (!remoteData.gastosFixos || remoteData.gastosFixos.length === 0);
+          if (remoteWasMissing && (finalReceitas.length > 0 || finalFixed.length > 0)) {
+            saveMonthDataToCloud(currentUser.uid, selectedPeriod, finalData).catch(console.error);
           }
-          setData(newBaseline);
-          saveMonthDataToCloud(currentUser.uid, selectedPeriod, newBaseline).catch((err) => {
-            console.error("Erro ao inicializar mês na nuvem:", err);
-          });
+        } else if (remoteData === null) {
+          // If month doesn't exist on cloud yet, check if local storage already has user data!
+          if (localData && ((localData.receitas && localData.receitas.length > 0) || (localData.gastosFixos && localData.gastosFixos.length > 0))) {
+            saveMonthDataToCloud(currentUser.uid, selectedPeriod, localData).catch(console.error);
+          } else {
+            const sourceMonth = dataRef.current.receitas?.length > 0 || dataRef.current.gastosFixos?.length > 0
+              ? dataRef.current
+              : findPriorSourceMonth(selectedPeriod);
+            const newBaseline = buildReplicatedMonthBaseline(selectedPeriod, sourceMonth);
+            if (projectedForThisMonth.length > 0) {
+              newBaseline.cartoes = projectedForThisMonth;
+            }
+            setData(newBaseline);
+            try {
+              localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(newBaseline));
+            } catch {}
+            saveMonthDataToCloud(currentUser.uid, selectedPeriod, newBaseline).catch((err) => {
+              console.error("Erro ao inicializar mês na nuvem:", err);
+            });
+          }
         }
       },
       () => setIsCloudSyncing(false)
@@ -306,12 +848,32 @@ export default function App() {
     return calculateMetrics(data);
   }, [data]);
 
-  // Persist state changes locally and in Firebase cloud
+  // Persist state changes locally and in Firebase cloud immediately
   const saveState = (newData: FinancialData) => {
     setData(newData);
+    if (newData.receitas && newData.receitas.length > 0) {
+      saveReceitasToVault(newData.receitas, currentUser?.uid);
+    }
     try {
       localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(newData));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newData));
+      localStorage.setItem(LAST_PERIOD_KEY, selectedPeriod);
+
+      // Save rolling snapshot history to guarantee zero data loss
+      const snapKey = "fin_iq_state_snapshots";
+      const rawSnap = localStorage.getItem(snapKey);
+      let snapList: any[] = [];
+      if (rawSnap) {
+        try {
+          snapList = JSON.parse(rawSnap);
+        } catch {}
+      }
+      snapList.unshift({
+        timestamp: new Date().toISOString(),
+        monthYear: selectedPeriod,
+        data: newData,
+      });
+      if (snapList.length > 25) snapList = snapList.slice(0, 25);
+      localStorage.setItem(snapKey, JSON.stringify(snapList));
     } catch (e) {
       console.error("Erro ao salvar no localStorage:", e);
     }
@@ -371,28 +933,6 @@ export default function App() {
     return list;
   };
 
-  // Helper to build a clean baseline for a new month inheriting fixed expenses
-  const buildNewMonthBaseline = (monthYear: string, source: FinancialData): FinancialData => {
-    return {
-      monthYear,
-      cards: source.cards,
-      receitas: [],
-      gastosFixos: (source.gastosFixos || []).map((f) => ({
-        ...f,
-        id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
-        status: "pendente" as const,
-        date: `${monthYear}-${(f.date || "").split("-")[2] || "05"}`,
-      })),
-      cartoes: [],
-      investimentos: [],
-      imprevistos: [],
-      metaRiqueza: source.metaRiqueza,
-      investimentoAcumuladoAnterior:
-        (source.investimentoAcumuladoAnterior || 0) +
-        (source.investimentos || []).reduce((acc, i) => acc + (Number(i.amount) || 0), 0),
-    };
-  };
-
   // Retroactively scan and project all existing installments across all months
   const runGlobalInstallmentProjection = async (notifyUser = false) => {
     setIsCloudSyncing(true);
@@ -407,24 +947,17 @@ export default function App() {
 
       let totalInjected = 0;
 
-      // Injects into each target month in LocalStorage
+      // Injects into each target month in LocalStorage IF the month already exists
       for (const [mYear, items] of Object.entries(projectedByMonth)) {
         try {
           const raw = localStorage.getItem(`fin_iq_month_${mYear}`);
-          let mData: FinancialData;
           if (raw) {
-            mData = JSON.parse(raw);
+            const mData = JSON.parse(raw);
             const initialCount = (mData.cartoes || []).length;
             mData.cartoes = mergeProjectedInstallments(mData.cartoes || [], items, deletedKeys);
             totalInjected += mData.cartoes.length - initialCount;
-          } else {
-            mData = buildNewMonthBaseline(mYear, data);
-            mData.cartoes = items;
-            totalInjected += items.length;
+            localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
           }
-          mData.cards = data.cards;
-          mData.monthYear = mYear;
-          localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
         } catch (err) {}
       }
 
@@ -489,37 +1022,48 @@ export default function App() {
     }
   };
 
-  // Switching months seamlessly and ensuring installments & fixed expenses are loaded
+  // Switching months seamlessly: preserves existing saved months, replicates recurring items for new months
   const handleSelectPeriod = (newPeriod: string) => {
     if (newPeriod === selectedPeriod) return;
 
-    // 1. Save current month before switching
+    // 1. Save current month state before switching
     try {
       localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(data));
       localStorage.setItem(LAST_PERIOD_KEY, newPeriod);
+      if (currentUser) {
+        saveMonthDataToCloud(currentUser.uid, selectedPeriod, data).catch(console.error);
+        saveLastPeriodToCloud(currentUser.uid, newPeriod).catch(console.error);
+      }
     } catch (e) {}
 
-    // 2. Look up local data for newPeriod or build baseline
+    // 2. Look up saved data for newPeriod or replicate from recent source month
     let targetMonthData: FinancialData;
     const rawLocal = localStorage.getItem(`fin_iq_month_${newPeriod}`);
     if (rawLocal) {
       try {
         targetMonthData = JSON.parse(rawLocal);
       } catch {
-        targetMonthData = buildNewMonthBaseline(newPeriod, data);
+        const sourceMonth =
+          (data.receitas?.length > 0 || data.gastosFixos?.length > 0)
+            ? data
+            : findPriorSourceMonth(newPeriod);
+        targetMonthData = buildReplicatedMonthBaseline(newPeriod, sourceMonth);
       }
     } else {
-      targetMonthData = buildNewMonthBaseline(newPeriod, data);
+      // New month: inherit recurring items from currently viewed month or prior month
+      const sourceMonth =
+        (data.receitas?.length > 0 || data.gastosFixos?.length > 0)
+          ? data
+          : findPriorSourceMonth(newPeriod);
+      targetMonthData = buildReplicatedMonthBaseline(newPeriod, sourceMonth);
     }
 
-    // Ensure fixed expenses are present (inherit recurring fixed expenses if missing)
+    // Auto-replicate revenues and recurring fixed expenses if target month is missing them
+    if (!targetMonthData.receitas || targetMonthData.receitas.length === 0) {
+      targetMonthData.receitas = ensureMonthReceitas(newPeriod);
+    }
     if (!targetMonthData.gastosFixos || targetMonthData.gastosFixos.length === 0) {
-      targetMonthData.gastosFixos = data.gastosFixos.map((f) => ({
-        ...f,
-        id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
-        status: "pendente" as const,
-        date: `${newPeriod}-${(f.date || "").split("-")[2] || "05"}`,
-      }));
+      targetMonthData.gastosFixos = ensureMonthGastosFixos(newPeriod);
     }
 
     // 3. Project missing installments from all existing purchases into this new period
@@ -548,11 +1092,11 @@ export default function App() {
 
     try {
       localStorage.setItem(`fin_iq_month_${newPeriod}`, JSON.stringify(targetMonthData));
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(targetMonthData));
     } catch {}
 
     if (currentUser) {
       saveMonthDataToCloud(currentUser.uid, newPeriod, targetMonthData).catch(console.error);
+      saveLastPeriodToCloud(currentUser.uid, newPeriod).catch(console.error);
     }
   };
 
@@ -596,8 +1140,142 @@ export default function App() {
   };
 
   const handleDeleteReceita = (id: string) => {
-    saveState({ ...data, receitas: data.receitas.filter((r) => r.id !== id) });
+    const filtered = data.receitas.filter((r) => r.id !== id);
+    saveState({ ...data, receitas: filtered });
+    if (filtered.length > 0) {
+      saveReceitasToVault(filtered, currentUser?.uid);
+    }
     addToast("info", "Receita removida");
+  };
+
+  const handleReplicateReceitasAllMonths = () => {
+    if (!data.receitas || data.receitas.length === 0) {
+      addToast(
+        "warning",
+        "Nenhuma receita para replicar",
+        "Cadastre ou restaure suas receitas antes de replicar."
+      );
+      return;
+    }
+    saveReceitasToVault(data.receitas, currentUser?.uid);
+    let count = 0;
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("fin_iq_month_")) {
+          const mYear = key.replace("fin_iq_month_", "");
+          if (mYear !== selectedPeriod) {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              parsed.receitas = data.receitas.map((r) => ({
+                ...r,
+                id: "rec_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+                date: `${mYear}-${(r.date || "").split("-")[2] || "05"}`,
+              }));
+              localStorage.setItem(key, JSON.stringify(parsed));
+              if (currentUser) {
+                saveMonthDataToCloud(currentUser.uid, mYear, parsed).catch(console.error);
+              }
+              count++;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    addToast(
+      "success",
+      "Receitas Replicadas com Sucesso!",
+      `${data.receitas.length} fontes de renda copiadas para todos os meses do sistema.`
+    );
+  };
+
+  const handleReplicateReceitasFromPreviousMonth = () => {
+    const prevMonth = getPreviousMonth(selectedPeriod);
+    let sourceMonth: FinancialData | null = null;
+    try {
+      const raw = localStorage.getItem(`fin_iq_month_${prevMonth}`);
+      if (raw) sourceMonth = JSON.parse(raw);
+    } catch {}
+    if (!sourceMonth) sourceMonth = findPriorSourceMonth(selectedPeriod);
+
+    if (!sourceMonth || !sourceMonth.receitas || sourceMonth.receitas.length === 0) {
+      addToast(
+        "warning",
+        "Nenhuma receita no mês anterior",
+        "Cadastre receitas no mês anterior antes de copiar."
+      );
+      return;
+    }
+
+    const cloned = sourceMonth.receitas.map((r, idx) => ({
+      ...r,
+      id: `rec_${selectedPeriod}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: `${selectedPeriod}-${(r.date || "").split("-")[2] || "05"}`,
+    }));
+
+    saveState({ ...data, receitas: cloned });
+    addToast(
+      "success",
+      "Receitas Replicadas!",
+      `${cloned.length} fontes de renda copiadas do mês anterior. Você pode alterar os valores deste mês.`
+    );
+  };
+
+  const handleRestoreReceitas = () => {
+    const recovered = getStoredReceitasVault();
+    if (recovered.length === 0) {
+      addToast("warning", "Nenhuma receita salva no cofre para recuperar.");
+      return;
+    }
+    const mapped = recovered.map((r, idx) => ({
+      ...r,
+      id: `rec_${selectedPeriod}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      date: `${selectedPeriod}-${(r.date || "").split("-")[2] || "05"}`,
+    }));
+    saveState({ ...data, receitas: mapped });
+    addToast(
+      "success",
+      "Receitas Restauradas!",
+      `${mapped.length} fontes de renda recuperadas para o mês de ${selectedPeriod}.`
+    );
+  };
+
+  const handleReplicateInvestments = () => {
+    let sourceInvs: Investimento[] = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("fin_iq_month_")) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed?.investimentos) && parsed.investimentos.length > 0) {
+              sourceInvs = parsed.investimentos;
+              break;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    if (sourceInvs.length === 0) {
+      sourceInvs = INITIAL_DATA.investimentos;
+    }
+
+    const cloned = sourceInvs.map((inv) => ({
+      ...inv,
+      id: "inv_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+      date: `${selectedPeriod}-${(inv.date || "").split("-")[2] || "10"}`,
+    }));
+
+    saveState({ ...data, investimentos: cloned });
+    addToast(
+      "success",
+      "Investimentos Replicados!",
+      `${cloned.length} aportes preparados para o mês atual.`
+    );
   };
 
   // --- Handlers for Gastos Fixos ---
@@ -640,20 +1318,79 @@ export default function App() {
     addToast("info", "Gasto fixo removido");
   };
 
+  const handleReplicateFixedFromPreviousMonth = () => {
+    const prevMonth = getPreviousMonth(selectedPeriod);
+    let sourceMonth: FinancialData | null = null;
+    try {
+      const raw = localStorage.getItem(`fin_iq_month_${prevMonth}`);
+      if (raw) sourceMonth = JSON.parse(raw);
+    } catch {}
+    if (!sourceMonth) sourceMonth = findPriorSourceMonth(selectedPeriod);
+
+    if (!sourceMonth || !sourceMonth.gastosFixos || sourceMonth.gastosFixos.length === 0) {
+      addToast(
+        "warning",
+        "Nenhuma conta fixa no mês anterior",
+        "Cadastre contas no mês anterior antes de copiar."
+      );
+      return;
+    }
+
+    const cloned = sourceMonth.gastosFixos
+      .filter((f) => f.recurring !== false)
+      .map((f, idx) => ({
+        ...f,
+        id: `fix_${selectedPeriod}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        status: "pendente" as const,
+        date: `${selectedPeriod}-${(f.date || "").split("-")[2] || "05"}`,
+      }));
+
+    saveState({ ...data, gastosFixos: cloned });
+    addToast(
+      "success",
+      "Contas Fixas Replicadas!",
+      `${cloned.length} contas copiadas do mês anterior com status pendente. Você pode alterar os valores deste mês.`
+    );
+  };
+
   const handleReplicateFixedExpenses = () => {
+    const nextMonth = getNextMonth(selectedPeriod);
     const count = data.gastosFixos.length;
     if (count === 0) {
       addToast("warning", "Nenhuma conta fixa cadastrada para replicar.");
       return;
     }
-    const cloned = data.gastosFixos.map((f) => ({
-      ...f,
-      id: "fix_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
-      status: "pendente" as const,
-      date: `${selectedPeriod}-${(f.date || "").split("-")[2] || "05"}`,
-    }));
-    saveState({ ...data, gastosFixos: cloned });
-    addToast("success", "Contas replicadas com sucesso!", `${count} contas fixas preparadas para o novo mês.`);
+
+    const cloned = data.gastosFixos
+      .filter((f) => f.recurring !== false)
+      .map((f, idx) => ({
+        ...f,
+        id: `fix_${nextMonth}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        status: "pendente" as const,
+        date: `${nextMonth}-${(f.date || "").split("-")[2] || "05"}`,
+      }));
+
+    try {
+      const rawNext = localStorage.getItem(`fin_iq_month_${nextMonth}`);
+      let nextData: FinancialData;
+      if (rawNext) {
+        nextData = JSON.parse(rawNext);
+        nextData.gastosFixos = cloned;
+      } else {
+        nextData = buildReplicatedMonthBaseline(nextMonth, data);
+        nextData.gastosFixos = cloned;
+      }
+      localStorage.setItem(`fin_iq_month_${nextMonth}`, JSON.stringify(nextData));
+      if (currentUser) {
+        saveMonthDataToCloud(currentUser.uid, nextMonth, nextData).catch(console.error);
+      }
+    } catch {}
+
+    addToast(
+      "success",
+      "Contas Replicadas para o Próximo Mês!",
+      `${count} contas fixas copiadas para ${nextMonth}. Os valores podem ser alterados naquele mês.`
+    );
   };
 
   // --- Handlers for Credit Cards & Installments Across Future Months ---
@@ -722,7 +1459,7 @@ export default function App() {
           mData.cards = data.cards;
           mData.monthYear = mYear;
         } else {
-          mData = buildNewMonthBaseline(mYear, data);
+          mData = buildReplicatedMonthBaseline(mYear, data);
           mData.cartoes = items;
           mData.monthYear = mYear;
         }
@@ -1053,7 +1790,7 @@ export default function App() {
             mData = JSON.parse(raw);
             mData.cartoes = mergeProjectedInstallments(mData.cartoes || [], instList, getDeletedExpenseKeys());
           } else {
-            mData = buildNewMonthBaseline(mYear, data);
+            mData = buildReplicatedMonthBaseline(mYear, data);
             mData.cartoes = instList;
           }
           localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(mData));
@@ -1119,6 +1856,8 @@ export default function App() {
         currentUser={currentUser}
         isCloudSyncing={isCloudSyncing}
         onOpenAuthModal={() => setIsAuthModalOpen(true)}
+        onOpenMobileSyncModal={() => setIsMobileSyncOpen(true)}
+        onOpenAuditorModal={() => setIsAuditorOpen(true)}
         onLogout={handleLogout}
         onOpenWhatsAppModal={() => setIsWhatsAppOpen(true)}
         onOpenAdvisorModal={() => setIsAdvisorOpen(true)}
@@ -1126,12 +1865,47 @@ export default function App() {
         onImportJSON={handleImportJSON}
         onResetData={handleResetData}
         onReplicateFixedExpenses={handleReplicateFixedExpenses}
+        onReplicateFromPreviousMonth={handleReplicateFixedFromPreviousMonth}
+        onReplicateInvestments={handleReplicateInvestments}
+        onReplicateReceitasAllMonths={handleReplicateReceitasAllMonths}
+        onRestoreReceitas={handleRestoreReceitas}
         selectedPeriod={selectedPeriod}
         onSelectPeriod={handleSelectPeriod}
       />
 
       {/* Main Workspace */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8 flex flex-col gap-6">
+        {/* Local Mode Notice Banner */}
+        {!currentUser && (
+          <div className="bg-gradient-to-r from-amber-500/10 via-slate-900 to-slate-900 border border-amber-500/30 rounded-2xl p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg animate-in fade-in duration-300">
+            <div className="flex items-start sm:items-center gap-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0 mt-1 sm:mt-0 animate-ping" />
+              <div>
+                <p className="text-xs font-bold text-amber-300">
+                  Modo Local Ativo: Seus dados estão salvos apenas neste navegador
+                </p>
+                <p className="text-[11px] text-slate-300">
+                  Para que seus lançamentos apareçam em tempo real no celular e no computador com sincronização contínua, conecte sua conta de nuvem.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer"
+              >
+                Conectar Nuvem
+              </button>
+              <button
+                onClick={() => setIsMobileSyncOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition-all cursor-pointer"
+              >
+                📱 Conectar Celular
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Navigation Tabs Bar */}
         <NavigationTabs
           activeTab={activeTab}
@@ -1156,6 +1930,9 @@ export default function App() {
             onAddReceita={handleAddReceita}
             onUpdateReceita={handleUpdateReceita}
             onDeleteReceita={handleDeleteReceita}
+            onReplicateAllMonths={handleReplicateReceitasAllMonths}
+            onReplicateFromPreviousMonth={handleReplicateReceitasFromPreviousMonth}
+            onRestoreReceitas={handleRestoreReceitas}
           />
         )}
 
@@ -1168,6 +1945,7 @@ export default function App() {
             onMarkAllAsPaid={handleMarkAllAsPaid}
             onDeleteGastoFixo={handleDeleteGastoFixo}
             onReplicateNextMonth={handleReplicateFixedExpenses}
+            onReplicateFromPreviousMonth={handleReplicateFixedFromPreviousMonth}
           />
         )}
 
@@ -1193,6 +1971,7 @@ export default function App() {
             onAddInvestimento={handleAddInvestimento}
             onUpdateInvestimento={handleUpdateInvestimento}
             onDeleteInvestimento={handleDeleteInvestimento}
+            onReplicateInvestimentos={handleReplicateInvestments}
           />
         )}
 
@@ -1203,16 +1982,6 @@ export default function App() {
             onAddImprevisto={handleAddImprevisto}
             onUpdateImprevisto={handleUpdateImprevisto}
             onDeleteImprevisto={handleDeleteImprevisto}
-          />
-        )}
-
-        {activeTab === "riqueza" && (
-          <CampoRiquezaView
-            metrics={metrics}
-            metaRiqueza={data.metaRiqueza}
-            investimentoAcumuladoAnterior={data.investimentoAcumuladoAnterior}
-            onUpdateMeta={handleUpdateMetaRiqueza}
-            onUpdateInvestimentoAnterior={handleUpdateInvestimentoAnterior}
           />
         )}
       </main>
@@ -1239,6 +2008,21 @@ export default function App() {
           setCurrentUser(session);
           addToast("success", "Sincronização Conectada!", `Bem-vindo de volta, ${session.displayName}.`);
         }}
+      />
+
+      <MobileSyncModal
+        isOpen={isMobileSyncOpen}
+        onClose={() => setIsMobileSyncOpen(false)}
+        currentUser={currentUser}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
+      />
+
+      <MonthAuditorModal
+        isOpen={isAuditorOpen}
+        onClose={() => setIsAuditorOpen(false)}
+        selectedPeriod={selectedPeriod}
+        onSelectPeriod={handleSelectPeriod}
+        onRestoreMonthData={saveState}
       />
 
       <ToastContainer toasts={toasts} onRemove={removeToast} />

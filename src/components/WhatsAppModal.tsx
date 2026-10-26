@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { ExtractedItem, TransactionType } from "../types";
 import { formatBRL } from "../utils/formatters";
+import { parseTransactionsHeuristic } from "../utils/whatsappParser";
 
 interface WhatsAppModalProps {
   isOpen: boolean;
@@ -60,20 +61,28 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
         body: JSON.stringify({ text: inputText }),
       });
 
-      const data = await res.json();
-      if (data.success && Array.isArray(data.items)) {
-        const itemsWithSelection: ExtractedItem[] = data.items.map((i: any) => ({
-          ...i,
-          selected: true,
-        }));
-        setExtractedItems(itemsWithSelection);
-        setHasExtracted(true);
-        if (data.note) {
-          setAiEngineNote(data.note);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.items)) {
+          const itemsWithSelection: ExtractedItem[] = data.items.map((i: any) => ({
+            ...i,
+            selected: true,
+          }));
+          setExtractedItems(itemsWithSelection);
+          setHasExtracted(true);
+          if (data.note) {
+            setAiEngineNote(data.note);
+          }
+          return;
         }
       }
+      throw new Error("API indisponível");
     } catch (err) {
-      console.error("Erro na extração:", err);
+      console.warn("Utilizando motor de extração local no cliente:", err);
+      const localItems = parseTransactionsHeuristic(inputText);
+      setExtractedItems(localItems);
+      setHasExtracted(true);
+      setAiEngineNote("Processado pelo motor local instantâneo.");
     } finally {
       setIsLoading(false);
     }
