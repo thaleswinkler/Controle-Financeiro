@@ -45,12 +45,28 @@ export function calculateMetrics(data: FinancialData): FinancialMetrics {
 
   const totalCartoes = (data.cartoes || []).reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
   const totalImprevistos = (data.imprevistos || []).reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
-  const totalInvestimentosMes = (data.investimentos || []).reduce((acc, i) => acc + (Number(i.amount) || 0), 0);
+  
+  // Total da carteira investida (posições patrimoniais onde o dinheiro está alocado)
+  const totalCarteiraInvestida = (data.investimentos || []).reduce(
+    (acc, i) => acc + (Number(i.amount) || 0),
+    0
+  );
+  
+  // Aportes novos do mês (se especificado aporteMensal ou se for o total aportado)
+  const totalInvestimentosMes = (data.investimentos || []).reduce(
+    (acc, i) => acc + (typeof i.aporteMensal === "number" ? i.aporteMensal : 0),
+    0
+  );
 
   const totalGastos = totalFixos + totalCartoes + totalImprevistos;
   const saldoMensal = totalReceita - totalGastos;
 
-  const totalInvestidoAcumulado = (data.investimentoAcumuladoAnterior || 0) + totalInvestimentosMes;
+  // Total investido acumulado: prioriza as posições declaradas na carteira
+  const totalInvestidoAcumulado =
+    totalCarteiraInvestida > 0
+      ? totalCarteiraInvestida
+      : Number(data.investimentoAcumuladoAnterior || 0);
+
   const patrimonioLiquido = totalInvestidoAcumulado + Math.max(0, saldoMensal);
 
   // Card specific totals
@@ -65,8 +81,21 @@ export function calculateMetrics(data: FinancialData): FinancialMetrics {
   const fixedExpenseRatio = totalReceita > 0 ? (totalFixos / totalReceita) * 100 : 0;
   const cardExpenseRatio = totalReceita > 0 ? (totalCartoes / totalReceita) * 100 : 0;
 
-  // Passive income estimated at ~0.8% monthly (conservative real return in BRL investments)
-  const rendimentoPassivoEst = totalInvestidoAcumulado * 0.008;
+  // Rendimento passivo mensal estimado calculado pelos indexadores de cada ativo
+  let rendimentoPassivoEst = 0;
+  if ((data.investimentos || []).length > 0) {
+    rendimentoPassivoEst = (data.investimentos || []).reduce((sum, item) => {
+      const val = Number(item.amount) || 0;
+      if (val <= 0) return sum;
+      // Taxa anual padrão Selic/CDI ~10.65% a.a. se não definida
+      const annualRate = typeof item.taxaAnual === "number" && item.taxaAnual > 0 ? item.taxaAnual : 10.65;
+      const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
+      return sum + val * monthlyRate;
+    }, 0);
+  } else {
+    // Estimativa conservadora de ~0.85% ao mês sobre o patrimônio acumulado
+    rendimentoPassivoEst = totalInvestidoAcumulado * (Math.pow(1 + 0.1065, 1 / 12) - 1);
+  }
   const coberturaGastosFixosPct = totalFixos > 0 ? (rendimentoPassivoEst / totalFixos) * 100 : 0;
 
   return {

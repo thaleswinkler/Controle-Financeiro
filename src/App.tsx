@@ -54,6 +54,8 @@ import {
   getLastPeriodFromCloud,
   saveCardsToCloud,
   getCardsFromCloud,
+  savePortfolioToCloud,
+  getPortfolioFromCloud,
   getStoredCloudSession,
   logoutUser,
   CloudUserSession,
@@ -65,6 +67,28 @@ const STORAGE_KEY = "fin_iq_pro_data_v2";
 const DELETED_KEYS_STORAGE = "fin_iq_deleted_expenses_v2";
 const LAST_PERIOD_KEY = "fin_iq_last_selected_period";
 const MASTER_RECEITAS_VAULT_KEY = "fin_iq_master_receitas_vault_v2";
+const MASTER_PORTFOLIO_VAULT_KEY = "fin_iq_master_portfolio_vault_v2";
+
+export function getStoredPortfolioVault(): Investimento[] {
+  try {
+    const raw = localStorage.getItem(MASTER_PORTFOLIO_VAULT_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) return arr;
+    }
+  } catch {}
+  return INITIAL_DATA.investimentos;
+}
+
+export function savePortfolioToVault(portfolio: Investimento[], uid?: string) {
+  if (!portfolio || portfolio.length === 0) return;
+  try {
+    localStorage.setItem(MASTER_PORTFOLIO_VAULT_KEY, JSON.stringify(portfolio));
+    if (uid) {
+      savePortfolioToCloud(uid, portfolio).catch(console.error);
+    }
+  } catch {}
+}
 
 export function getPreviousMonth(monthYear: string): string {
   const [y, m] = monthYear.split("-").map(Number);
@@ -446,81 +470,332 @@ function purgeLegacyMockStorage() {
   } catch {}
 }
 
+export function applyDecemberStandardCleanup(currentUserUid?: string): FinancialData {
+  // 1. Excluir meses anteriores a 2026-12 conforme solicitado pelo usuário
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("fin_iq_month_")) {
+        const m = k.replace("fin_iq_month_", "");
+        if (/^\d{4}-\d{2}$/.test(m) && m < "2026-12") {
+          keysToRemove.push(k);
+        }
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {}
+
+  // 2. Base Oficial de Dezembro de 2026 com os 8 cartões exatos
+  const decCartoes: GastoCartao[] = [
+    {
+      id: "card_c6_carro_impacto_prime_inst_1",
+      card: "C6",
+      description: "Carro Impacto Prime",
+      amount: 752.07,
+      date: "2026-12-28",
+      installments: "1/4",
+      currentInstallment: 1,
+      totalInstallments: 4,
+      totalPurchaseAmount: 3008.28,
+      installmentSeriesId: "series_c6_carro_impacto_prime_4x",
+      category: "Veículo",
+    },
+    {
+      id: "card_bb_carro_impacto_inst_1",
+      card: "BB",
+      description: "Carro Impacto",
+      amount: 565.8,
+      date: "2026-12-10",
+      installments: "1/6",
+      currentInstallment: 1,
+      totalInstallments: 6,
+      totalPurchaseAmount: 3394.8,
+      installmentSeriesId: "series_bb_carro_impacto_6x",
+      category: "Veículo",
+    },
+    {
+      id: "card_amazon_prime_inst_1",
+      card: "Amazon",
+      description: "Amazon Prime",
+      amount: 99.92,
+      date: "2026-12-10",
+      installments: "1/3",
+      currentInstallment: 1,
+      totalInstallments: 3,
+      totalPurchaseAmount: 299.76,
+      installmentSeriesId: "series_amazon_prime_3x",
+      category: "Compras",
+    },
+    {
+      id: "card_c6_colombo_inst_1",
+      card: "C6",
+      description: "Colombo",
+      amount: 85.75,
+      date: "2026-12-03",
+      installments: "1/3",
+      currentInstallment: 1,
+      totalInstallments: 3,
+      totalPurchaseAmount: 257.25,
+      installmentSeriesId: "series_c6_colombo_8575_3x",
+      category: "Compras",
+    },
+    {
+      id: "card_c6_ml_6512_inst_1",
+      card: "C6",
+      description: "Mercado Livre",
+      amount: 65.12,
+      date: "2026-12-10",
+      installments: "1/6",
+      currentInstallment: 1,
+      totalInstallments: 6,
+      totalPurchaseAmount: 390.72,
+      installmentSeriesId: "series_c6_ml_6512_6x",
+      category: "Compras",
+    },
+    {
+      id: "card_c6_ml_5414_inst_1",
+      card: "C6",
+      description: "Mercado Livre",
+      amount: 54.14,
+      date: "2026-12-10",
+      installments: "1/4",
+      currentInstallment: 1,
+      totalInstallments: 4,
+      totalPurchaseAmount: 216.56,
+      installmentSeriesId: "series_c6_ml_5414_4x",
+      category: "Compras",
+    },
+    {
+      id: "card_c6_ml_5214_inst_1",
+      card: "C6",
+      description: "Mercado Livre",
+      amount: 52.14,
+      date: "2026-12-28",
+      installments: "1/4",
+      currentInstallment: 1,
+      totalInstallments: 4,
+      totalPurchaseAmount: 208.56,
+      installmentSeriesId: "series_c6_ml_5214_4x",
+      category: "Compras",
+    },
+    {
+      id: "card_c6_ml_3357_avista",
+      card: "C6",
+      description: "Mercado Livre",
+      amount: 33.57,
+      date: "2026-12-10",
+      installments: "À vista",
+      currentInstallment: 1,
+      totalInstallments: 1,
+      totalPurchaseAmount: 33.57,
+      installmentSeriesId: "series_c6_ml_3357_1x",
+      category: "Compras",
+    },
+  ];
+
+  // Preservar compras à vista adicionais feitas em dezembro pelo usuário, se houver
+  let existingUserAvista: GastoCartao[] = [];
+  try {
+    const rawDec = localStorage.getItem("fin_iq_month_2026-12");
+    if (rawDec) {
+      const parsedDec = JSON.parse(rawDec);
+      if (Array.isArray(parsedDec?.cartoes)) {
+        existingUserAvista = parsedDec.cartoes.filter(
+          (c: GastoCartao) =>
+            (c.totalInstallments === 1 || c.installments?.toLowerCase().includes("vista")) &&
+            !decCartoes.some(
+              (dc) =>
+                dc.description.toLowerCase() === c.description.toLowerCase() &&
+                dc.amount === c.amount
+            )
+        );
+      }
+    }
+  } catch {}
+
+  const finalDecCartoes = [...decCartoes, ...existingUserAvista];
+
+  // Investimentos patrimoniais
+  const initialPortfolio = getStoredPortfolioVault();
+  const finalInvestimentos =
+    initialPortfolio && initialPortfolio.length > 0
+      ? initialPortfolio
+      : INITIAL_DATA.investimentos;
+
+  const decData: FinancialData = {
+    monthYear: "2026-12",
+    cards: loadStoredCards(),
+    receitas: INITIAL_DATA.receitas,
+    gastosFixos: INITIAL_DATA.gastosFixos,
+    cartoes: finalDecCartoes,
+    investimentos: finalInvestimentos,
+    imprevistos: [],
+    metaRiqueza: 100000.0,
+    investimentoAcumuladoAnterior: 20555.51,
+  };
+
+  try {
+    localStorage.setItem("fin_iq_month_2026-12", JSON.stringify(decData));
+    localStorage.setItem(LAST_PERIOD_KEY, "2026-12");
+    savePortfolioToVault(finalInvestimentos, currentUserUid);
+    saveReceitasToVault(INITIAL_DATA.receitas, currentUserUid);
+  } catch {}
+
+  // 3. Limpar os meses seguintes de qualquer resquício errado e projetar exatamente as parcelas corretas
+  const futureMonthsConfig = [
+    {
+      month: "2027-01",
+      cartoes: [
+        { ...decCartoes[0], id: "card_c6_carro_impacto_prime_inst_2", date: "2027-01-28", installments: "2/4", currentInstallment: 2 },
+        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_2", date: "2027-01-10", installments: "2/6", currentInstallment: 2 },
+        { ...decCartoes[2], id: "card_amazon_prime_inst_2", date: "2027-01-10", installments: "2/3", currentInstallment: 2 },
+        { ...decCartoes[3], id: "card_c6_colombo_inst_2", date: "2027-01-03", installments: "2/3", currentInstallment: 2 },
+        { ...decCartoes[4], id: "card_c6_ml_6512_inst_2", date: "2027-01-10", installments: "2/6", currentInstallment: 2 },
+        { ...decCartoes[5], id: "card_c6_ml_5414_inst_2", date: "2027-01-10", installments: "2/4", currentInstallment: 2 },
+        { ...decCartoes[6], id: "card_c6_ml_5214_inst_2", date: "2027-01-28", installments: "2/4", currentInstallment: 2 },
+      ],
+    },
+    {
+      month: "2027-02",
+      cartoes: [
+        { ...decCartoes[0], id: "card_c6_carro_impacto_prime_inst_3", date: "2027-02-28", installments: "3/4", currentInstallment: 3 },
+        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_3", date: "2027-02-10", installments: "3/6", currentInstallment: 3 },
+        { ...decCartoes[2], id: "card_amazon_prime_inst_3", date: "2027-02-10", installments: "3/3", currentInstallment: 3 },
+        { ...decCartoes[3], id: "card_c6_colombo_inst_3", date: "2027-02-03", installments: "3/3", currentInstallment: 3 },
+        { ...decCartoes[4], id: "card_c6_ml_6512_inst_3", date: "2027-02-10", installments: "3/6", currentInstallment: 3 },
+        { ...decCartoes[5], id: "card_c6_ml_5414_inst_3", date: "2027-02-10", installments: "3/4", currentInstallment: 3 },
+        { ...decCartoes[6], id: "card_c6_ml_5214_inst_3", date: "2027-02-28", installments: "3/4", currentInstallment: 3 },
+      ],
+    },
+    {
+      month: "2027-03",
+      cartoes: [
+        { ...decCartoes[0], id: "card_c6_carro_impacto_prime_inst_4", date: "2027-03-28", installments: "4/4", currentInstallment: 4 },
+        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_4", date: "2027-03-10", installments: "4/6", currentInstallment: 4 },
+        { ...decCartoes[4], id: "card_c6_ml_6512_inst_4", date: "2027-03-10", installments: "4/6", currentInstallment: 4 },
+        { ...decCartoes[5], id: "card_c6_ml_5414_inst_4", date: "2027-03-10", installments: "4/4", currentInstallment: 4 },
+        { ...decCartoes[6], id: "card_c6_ml_5214_inst_4", date: "2027-03-28", installments: "4/4", currentInstallment: 4 },
+      ],
+    },
+    {
+      month: "2027-04",
+      cartoes: [
+        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_5", date: "2027-04-10", installments: "5/6", currentInstallment: 5 },
+        { ...decCartoes[4], id: "card_c6_ml_6512_inst_5", date: "2027-04-10", installments: "5/6", currentInstallment: 5 },
+      ],
+    },
+    {
+      month: "2027-05",
+      cartoes: [
+        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_6", date: "2027-05-10", installments: "6/6", currentInstallment: 6 },
+        { ...decCartoes[4], id: "card_c6_ml_6512_inst_6", date: "2027-05-10", installments: "6/6", currentInstallment: 6 },
+      ],
+    },
+  ];
+
+  for (const fut of futureMonthsConfig) {
+    const futData: FinancialData = {
+      monthYear: fut.month,
+      cards: loadStoredCards(),
+      receitas: INITIAL_DATA.receitas.map((r, idx) => ({
+        ...r,
+        id: `rec_${fut.month}_${idx}`,
+        date: `${fut.month}-02`,
+      })),
+      gastosFixos: INITIAL_DATA.gastosFixos.map((f, idx) => ({
+        ...f,
+        id: `fix_${fut.month}_${idx}`,
+        date: `${fut.month}-05`,
+        status: "pendente",
+      })),
+      cartoes: fut.cartoes,
+      investimentos: finalInvestimentos,
+      imprevistos: [],
+      metaRiqueza: 100000.0,
+      investimentoAcumuladoAnterior: 20555.51,
+    };
+
+    try {
+      localStorage.setItem(`fin_iq_month_${fut.month}`, JSON.stringify(futData));
+    } catch {}
+
+    if (currentUserUid) {
+      saveMonthDataToCloud(currentUserUid, fut.month, futData).catch(console.error);
+    }
+  }
+
+  if (currentUserUid) {
+    saveMonthDataToCloud(currentUserUid, "2026-12", decData).catch(console.error);
+    saveLastPeriodToCloud(currentUserUid, "2026-12").catch(console.error);
+  }
+
+  try {
+    localStorage.setItem("fin_iq_dec26_standard_applied_v4", "true");
+  } catch {}
+
+  return decData;
+}
+
 export default function App() {
   // Purge any legacy mock entries on load
   purgeLegacyMockStorage();
 
-  // Reference month is dynamically initialized to the upcoming month (e.g. 2026-10)
-  // or user's last remembered period
   const [selectedPeriod, setSelectedPeriod] = useState<string>(() => {
     try {
+      const applied = localStorage.getItem("fin_iq_dec26_standard_applied_v4");
+      if (!applied) {
+        return "2026-12";
+      }
       const saved = localStorage.getItem(LAST_PERIOD_KEY);
       if (saved && /^\d{4}-\d{2}$/.test(saved)) {
         return saved;
       }
     } catch {}
-    return getDefaultReferenceMonth();
+    return "2026-12";
   });
 
   const [data, setData] = useState<FinancialData>(() => {
-    const initialPeriod = (() => {
-      try {
-        const saved = localStorage.getItem(LAST_PERIOD_KEY);
-        if (saved && /^\d{4}-\d{2}$/.test(saved)) return saved;
-      } catch {}
-      return getDefaultReferenceMonth();
-    })();
-
     try {
-      // 1. Check if the initialPeriod has already been saved by the user
+      const applied = localStorage.getItem("fin_iq_dec26_standard_applied_v4");
+      if (!applied) {
+        return applyDecemberStandardCleanup();
+      }
+
+      const initialPeriod = (() => {
+        try {
+          const saved = localStorage.getItem(LAST_PERIOD_KEY);
+          if (saved && /^\d{4}-\d{2}$/.test(saved)) return saved;
+        } catch {}
+        return "2026-12";
+      })();
+
       const monthSpecific = localStorage.getItem(`fin_iq_month_${initialPeriod}`);
       if (monthSpecific && !isLegacyMockData(monthSpecific)) {
         const parsed = JSON.parse(monthSpecific);
         if (parsed && parsed.monthYear === initialPeriod) {
           const validReceitas = ensureMonthReceitas(initialPeriod, parsed.receitas);
           const validFixos = ensureMonthGastosFixos(initialPeriod, parsed.gastosFixos);
+          const portfolioVault = getStoredPortfolioVault();
           return {
             ...parsed,
             receitas: validReceitas,
             gastosFixos: validFixos,
+            investimentos:
+              Array.isArray(parsed.investimentos) && parsed.investimentos.length > 0
+                ? parsed.investimentos
+                : portfolioVault,
             cards: loadStoredCards(),
           };
         }
       }
 
-      // 2. Look for any prior source month to replicate from
-      const sourceMonth = findPriorSourceMonth(initialPeriod);
-      if (sourceMonth) {
-        const newBaseline = buildReplicatedMonthBaseline(initialPeriod, sourceMonth);
-        try {
-          localStorage.setItem(`fin_iq_month_${initialPeriod}`, JSON.stringify(newBaseline));
-        } catch {}
-        return newBaseline;
-      }
-
-      // 3. Fallback for brand-new empty app startup
-      const initial = {
-        ...INITIAL_DATA,
-        monthYear: initialPeriod,
-        receitas: ensureMonthReceitas(initialPeriod, INITIAL_DATA.receitas),
-        gastosFixos: ensureMonthGastosFixos(initialPeriod, INITIAL_DATA.gastosFixos),
-        cards: loadStoredCards(),
-      };
-      try {
-        localStorage.setItem(`fin_iq_month_${initialPeriod}`, JSON.stringify(initial));
-      } catch {}
-      return initial;
+      return applyDecemberStandardCleanup();
     } catch (e) {
       console.error("Erro ao carregar dados do localStorage:", e);
     }
 
-    return {
-      ...INITIAL_DATA,
-      monthYear: initialPeriod,
-      receitas: ensureMonthReceitas(initialPeriod, INITIAL_DATA.receitas),
-      gastosFixos: ensureMonthGastosFixos(initialPeriod, INITIAL_DATA.gastosFixos),
-      cards: loadStoredCards(),
-    };
+    return applyDecemberStandardCleanup();
   });
 
   const [currentUser, setCurrentUser] = useState<CloudUserSession | null>(() =>
@@ -643,6 +918,21 @@ export default function App() {
             localStorage.setItem(GLOBAL_CARDS_KEY, JSON.stringify(cloudCards));
           } catch {}
           setData((prev) => ({ ...prev, cards: cloudCards }));
+        }
+      })
+      .catch(console.error);
+
+    // Sync cloud investment portfolio vault
+    getPortfolioFromCloud(currentUser.uid)
+      .then((cloudPort) => {
+        if (cloudPort && cloudPort.length > 0) {
+          savePortfolioToVault(cloudPort);
+          setData((prev) => {
+            if (!prev.investimentos || prev.investimentos.length === 0) {
+              return { ...prev, investimentos: cloudPort };
+            }
+            return prev;
+          });
         }
       })
       .catch(console.error);
@@ -851,6 +1141,9 @@ export default function App() {
     setData(newData);
     if (newData.receitas && newData.receitas.length > 0) {
       saveReceitasToVault(newData.receitas, currentUser?.uid);
+    }
+    if (newData.investimentos && newData.investimentos.length > 0) {
+      savePortfolioToVault(newData.investimentos, currentUser?.uid);
     }
     try {
       localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(newData));

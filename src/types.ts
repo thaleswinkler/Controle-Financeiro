@@ -36,8 +36,14 @@ export interface Investimento {
   id: string;
   description: string;
   type: "Renda Fixa" | "Ações" | "FIIs" | "Cripto" | "Reserva" | "Outros";
-  amount: number;
+  institution?: string; // Banco / Corretora onde o valor está custodiado (C6, BB, XP, Tesouro, etc.)
+  amount: number; // Saldo / Valor Total Investido (onde o dinheiro está alocado)
+  aporteMensal?: number; // Aporte realizado neste mês (opcional)
+  indexador?: string; // Taxa indexadora (ex: "100% CDI", "105% CDI", "110% CDI", "Selic (10,75%)", "IPCA + 6%", "12% a.a.")
+  taxaAnual?: number; // Taxa anual estimada em % (ex: 10.65, 11.2, 12.0)
+  liquidez?: string; // "Imediata (D+0)" | "Diária (D+1)" | "No Vencimento" | "Longo Prazo"
   date: string;
+  notes?: string;
 }
 
 export interface GastoImprevisto {

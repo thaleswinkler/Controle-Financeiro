@@ -17,7 +17,7 @@
     },
     "MonthlyFinancialData": {
       "title": "MonthlyFinancialData",
-      "description": "Dados financeiros mensais do usuário incluindo receitas, gastos fixos, cartões e aportes",
+      "description": "Dados financeiros mensais do usuário incluindo receitas, gastos fixos, cartões e patrimônio investido",
       "type": "object",
       "properties": {
         "userId": { "type": "string" },
@@ -43,6 +43,14 @@
     "/users/{userId}/months/{monthYear}": {
       "schema": "MonthlyFinancialData",
       "description": "Dados financeiros de cada mês de competência do usuário"
+    },
+    "/workspaces/{workspaceId}": {
+      "schema": "UserProfile",
+      "description": "Workspace unificado do usuário"
+    },
+    "/workspaces/{workspaceId}/months/{monthYear}": {
+      "schema": "MonthlyFinancialData",
+      "description": "Dados financeiros mensais no workspace"
     }
   }
 }

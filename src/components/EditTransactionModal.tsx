@@ -47,6 +47,10 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const [installments, setInstallments] = useState("À vista");
   const [fixStatus, setFixStatus] = useState<"pago" | "pendente">("pendente");
   const [invType, setInvType] = useState<Investimento["type"]>("Renda Fixa");
+  const [invInstitution, setInvInstitution] = useState("C6 Bank");
+  const [invIndexador, setInvIndexador] = useState("102% CDI");
+  const [invTaxaAnual, setInvTaxaAnual] = useState("10.86");
+  const [invLiquidez, setInvLiquidez] = useState("Imediata (D+0)");
 
   useEffect(() => {
     if (!target) return;
@@ -66,6 +70,10 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       setCategory(item.category || "Salário");
     } else if (kind === "investimento") {
       setInvType(item.type || "Renda Fixa");
+      setInvInstitution(item.institution || "C6 Bank");
+      setInvIndexador(item.indexador || "102% CDI");
+      setInvTaxaAnual(item.taxaAnual ? item.taxaAnual.toString() : "10.86");
+      setInvLiquidez(item.liquidez || "Imediata (D+0)");
     } else if (kind === "imprevisto") {
       setCategory(item.category || "Geral");
     }
@@ -121,12 +129,17 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         category,
       });
     } else if (target.kind === "investimento" && onSaveInvestimento) {
+      const valTaxa = parseFloat(invTaxaAnual.replace(",", "."));
       onSaveInvestimento({
         ...target.item,
         description: description.trim(),
         amount: val,
         date,
         type: invType,
+        institution: invInstitution,
+        indexador: invIndexador,
+        taxaAnual: !isNaN(valTaxa) && valTaxa > 0 ? valTaxa : 10.65,
+        liquidez: invLiquidez,
       });
     } else if (target.kind === "imprevisto" && onSaveImprevisto) {
       onSaveImprevisto({
@@ -321,20 +334,66 @@ export const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
 
           {/* Investimento specific fields */}
           {target.kind === "investimento" && (
-            <div>
-              <label className="block text-slate-300 font-semibold mb-1">Classe de Ativo</label>
-              <select
-                value={invType}
-                onChange={(e) => setInvType(e.target.value as Investimento["type"])}
-                className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
-              >
-                <option value="Renda Fixa">Renda Fixa (Tesouro, CDB)</option>
-                <option value="Ações">Ações Brasil / Exterior</option>
-                <option value="FIIs">Fundos Imobiliários (FIIs)</option>
-                <option value="Cripto">Criptomoedas / Bitcoin</option>
-                <option value="Reserva">Reserva de Emergência</option>
-                <option value="Outros">Outros</option>
-              </select>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Instituição</label>
+                  <select
+                    value={invInstitution}
+                    onChange={(e) => setInvInstitution(e.target.value)}
+                    className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="C6 Bank">C6 Bank</option>
+                    <option value="Banco do Brasil">Banco do Brasil</option>
+                    <option value="Tesouro Direto">Tesouro Direto</option>
+                    <option value="XP Investimentos">XP Investimentos</option>
+                    <option value="Nubank">Nubank</option>
+                    <option value="BTG Pactual">BTG Pactual</option>
+                    <option value="Outro">Outro</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Classe de Ativo</label>
+                  <select
+                    value={invType}
+                    onChange={(e) => setInvType(e.target.value as Investimento["type"])}
+                    className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="Reserva">Reserva de Emergência</option>
+                    <option value="Renda Fixa">Renda Fixa</option>
+                    <option value="Ações">Ações</option>
+                    <option value="FIIs">FIIs</option>
+                    <option value="Cripto">Cripto</option>
+                    <option value="Outros">Outros</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Taxa Indexadora</label>
+                  <input
+                    type="text"
+                    value={invIndexador}
+                    onChange={(e) => setInvIndexador(e.target.value)}
+                    placeholder="Ex: 102% CDI, Selic"
+                    className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Taxa Anual (% a.a.)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={invTaxaAnual}
+                    onChange={(e) => setInvTaxaAnual(e.target.value)}
+                    className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-2.5 text-sm text-white font-mono focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+              </div>
             </div>
           )}
 

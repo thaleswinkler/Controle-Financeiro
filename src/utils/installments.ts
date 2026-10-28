@@ -44,11 +44,8 @@ export function getMonthYearFromDate(dateStr: string): string {
  * E.g., in September 2026, the reference month is "2026-10" (Outubro).
  */
 export function getDefaultReferenceMonth(): string {
-  const now = new Date();
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const y = nextMonth.getFullYear();
-  const m = String(nextMonth.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
+  // O padrão do usuário é Dezembro de 2026 (fatura de novembro já fechada)
+  return "2026-12";
 }
 
 /**

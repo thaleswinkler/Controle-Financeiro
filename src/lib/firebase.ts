@@ -485,3 +485,38 @@ export async function getCardsFromCloud(uid: string): Promise<import("../types")
   return null;
 }
 
+// Master Vault: persist user's invested portfolio across all months and devices
+export async function savePortfolioToCloud(
+  uid: string,
+  portfolio: import("../types").Investimento[]
+) {
+  if (!portfolio || portfolio.length === 0) return;
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const portRef = doc(db, collectionName, uid, "settings", "portfolio");
+  try {
+    await setDoc(
+      portRef,
+      { portfolio, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (err) {
+    console.error("Erro ao salvar carteira de investimentos na nuvem:", err);
+  }
+}
+
+export async function getPortfolioFromCloud(
+  uid: string
+): Promise<import("../types").Investimento[] | null> {
+  const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
+  const portRef = doc(db, collectionName, uid, "settings", "portfolio");
+  try {
+    const snap = await getDoc(portRef);
+    if (snap.exists() && Array.isArray(snap.data()?.portfolio)) {
+      return snap.data().portfolio;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar carteira de investimentos da nuvem:", err);
+  }
+  return null;
+}
+
