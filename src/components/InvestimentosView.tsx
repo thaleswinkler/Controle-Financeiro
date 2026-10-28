@@ -71,6 +71,11 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
   const [inlineEditingId, setInlineEditingId] = useState<string | null>(null);
   const [inlineAmount, setInlineAmount] = useState("");
 
+  // Quick inline edit of taxa indexadora
+  const [inlineEditingIndexadorId, setInlineEditingIndexadorId] = useState<string | null>(null);
+  const [inlineIndexador, setInlineIndexador] = useState("");
+  const [inlineTaxaAnual, setInlineTaxaAnual] = useState("");
+
   // Projection simulator controls
   const [simProjectionMonths, setSimProjectionMonths] = useState<number>(6);
   const [simMonthlyContribution, setSimMonthlyContribution] = useState<string>("");
@@ -86,6 +91,22 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
       onUpdateInvestimento({ ...item, amount: val });
     }
     setInlineEditingId(null);
+  };
+
+  const startInlineEditIndexador = (item: Investimento) => {
+    setInlineEditingIndexadorId(item.id);
+    setInlineIndexador(item.indexador || "102% CDI");
+    setInlineTaxaAnual((item.taxaAnual || 10.86).toString());
+  };
+
+  const handleInlineIndexadorSave = (item: Investimento) => {
+    const val = parseFloat(inlineTaxaAnual.replace(",", "."));
+    onUpdateInvestimento({
+      ...item,
+      indexador: inlineIndexador.trim() || "100% CDI",
+      taxaAnual: !isNaN(val) && val > 0 ? val : 10.65,
+    });
+    setInlineEditingIndexadorId(null);
   };
 
   const handleIndexadorPresetChange = (presetLabel: string) => {
@@ -160,17 +181,22 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
     const finalInstitution =
       institution === "Outro" ? customInstitution.trim() || "Outro" : institution;
 
-    onAddInvestimento({
+    const newInvPayload: Omit<Investimento, "id"> = {
       description: description.trim(),
       institution: finalInstitution,
       type,
       amount: valAmount,
-      aporteMensal: !isNaN(valAporte || NaN) ? valAporte : undefined,
       indexador: indexador.trim() || "100% CDI",
       taxaAnual: !isNaN(valTaxa) && valTaxa > 0 ? valTaxa : 10.65,
       liquidez,
       date: date || getTodayISO(0),
-    });
+    };
+
+    if (typeof valAporte === "number" && !isNaN(valAporte) && valAporte > 0) {
+      newInvPayload.aporteMensal = valAporte;
+    }
+
+    onAddInvestimento(newInvPayload);
 
     setDescription("");
     setAmount("");
@@ -443,8 +469,8 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
             </div>
 
             {/* Indexador Selection */}
-            <div>
-              <label className="block text-slate-300 font-medium mb-1 flex items-center justify-between">
+            <div className="space-y-1.5">
+              <label className="block text-slate-300 font-medium flex items-center justify-between">
                 <span className="flex items-center gap-1">
                   <Percent className="w-3.5 h-3.5 text-cyan-400" />
                   <span>Taxa Indexadora</span>
@@ -453,17 +479,38 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                   {taxaAnual ? `${taxaAnual}% a.a.` : ""}
                 </span>
               </label>
-              <select
-                value={selectedIndexadorPreset}
-                onChange={(e) => handleIndexadorPresetChange(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white focus:border-cyan-500 focus:outline-none"
-              >
-                {INDEXADOR_PRESETS.map((p) => (
-                  <option key={p.label} value={p.label}>
-                    {p.label}
-                  </option>
+
+              {/* Direct text input so user can type 97%, 102% CDI, etc. freely */}
+              <input
+                type="text"
+                required
+                value={indexador}
+                onChange={(e) => setIndexador(e.target.value)}
+                placeholder="Ex: 97%, 102% CDI, Selic, IPCA + 6%"
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-white font-medium focus:border-cyan-500 focus:outline-none"
+              />
+
+              {/* Quick select presets */}
+              <div className="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none">
+                {INDEXADOR_PRESETS.slice(0, 7).map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      setIndexador(p.indexador);
+                      setTaxaAnual(p.taxaAnual.toString());
+                      setSelectedIndexadorPreset(p.label);
+                    }}
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all shrink-0 cursor-pointer ${
+                      indexador === p.indexador
+                        ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+                        : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white"
+                    }`}
+                  >
+                    {p.indexador}
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -578,7 +625,12 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                 <tr>
                   <th className="py-3 px-3 font-semibold">Ativo / Instituição</th>
                   <th className="py-3 px-3 font-semibold">Classe</th>
-                  <th className="py-3 px-3 font-semibold">Taxa Indexadora</th>
+                  <th className="py-3 px-3 font-semibold">
+                    Taxa Indexadora{" "}
+                    <span className="normal-case font-normal text-slate-500 text-[10px]">
+                      (clique p/ editar)
+                    </span>
+                  </th>
                   <th className="py-3 px-3 text-right font-semibold">
                     Valor Investido{" "}
                     <span className="normal-case font-normal text-slate-500 text-[10px]">
@@ -627,14 +679,64 @@ export const InvestimentosView: React.FC<InvestimentosViewProps> = ({
                           </span>
                         </td>
                         <td className="py-3 px-3">
-                          <div className="flex flex-col">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 w-fit">
-                              {i.indexador || "102% CDI"}
-                            </span>
-                            <span className="text-[10px] text-slate-400 mt-0.5 font-mono">
-                              {annual.toFixed(2)}% a.a. (~{(monthlyRate * 100).toFixed(2)}% a.m.)
-                            </span>
-                          </div>
+                          {inlineEditingIndexadorId === i.id ? (
+                            <div className="flex flex-col gap-1.5 p-2 bg-slate-950 border border-cyan-400 rounded-xl shadow-2xl min-w-44 animate-in fade-in">
+                              <span className="text-[10px] font-bold text-cyan-400 uppercase">
+                                Editar Indexador
+                              </span>
+                              <input
+                                type="text"
+                                value={inlineIndexador}
+                                onChange={(e) => setInlineIndexador(e.target.value)}
+                                placeholder="Ex: 97%, 102% CDI"
+                                className="bg-slate-900 border border-slate-700 text-cyan-300 text-xs rounded-lg px-2 py-1 font-bold focus:outline-none focus:border-cyan-400"
+                                autoFocus
+                              />
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={inlineTaxaAnual}
+                                  onChange={(e) => setInlineTaxaAnual(e.target.value)}
+                                  placeholder="% a.a."
+                                  className="bg-slate-900 border border-slate-700 text-white font-mono text-xs rounded-lg px-2 py-1 w-20 focus:outline-none focus:border-cyan-400"
+                                />
+                                <span className="text-[10px] text-slate-400 font-mono">% a.a.</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleInlineIndexadorSave(i)}
+                                  className="text-emerald-400 hover:text-emerald-300 p-1 hover:bg-emerald-500/20 rounded cursor-pointer"
+                                  title="Salvar taxa"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setInlineEditingIndexadorId(null)}
+                                  className="text-slate-400 hover:text-rose-400 p-1 hover:bg-rose-500/20 rounded cursor-pointer"
+                                  title="Cancelar"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              onClick={() => startInlineEditIndexador(i)}
+                              className="flex flex-col cursor-pointer group/idx py-1 px-1.5 rounded-lg hover:bg-slate-800/80 transition-colors w-fit"
+                              title="Clique para editar a taxa indexadora e rentabilidade anual"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 w-fit group-hover/idx:border-cyan-400 group-hover/idx:bg-cyan-500/20 transition-all">
+                                  {i.indexador || "102% CDI"}
+                                </span>
+                                <Edit3 className="w-3 h-3 text-slate-500 opacity-60 group-hover/idx:opacity-100 text-cyan-400 transition-opacity" />
+                              </div>
+                              <span className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                                {annual.toFixed(2)}% a.a. (~{(monthlyRate * 100).toFixed(2)}% a.m.)
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-3 text-right">
                           {inlineEditingId === i.id ? (

@@ -199,6 +199,17 @@ export function subscribeToMonthData(
   );
 }
 
+// Clean any undefined fields from payload to guarantee Firestore compatibility
+export function cleanForFirestore<T>(data: T): T {
+  if (data === undefined) return null as unknown as T;
+  return JSON.parse(
+    JSON.stringify(data, (_key, value) => {
+      if (value === undefined) return null;
+      return value;
+    })
+  );
+}
+
 // Save monthly data to Firestore
 export async function saveMonthDataToCloud(
   uid: string,
@@ -209,16 +220,14 @@ export async function saveMonthDataToCloud(
   const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
   const monthRef = doc(db, collectionName, uid, "months", docId);
 
-  await setDoc(
-    monthRef,
-    {
-      ...data,
-      userId: uid,
-      monthYear,
-      updatedAt: new Date().toISOString(),
-    },
-    { merge: true }
-  );
+  const payload = cleanForFirestore({
+    ...data,
+    userId: uid,
+    monthYear,
+    updatedAt: new Date().toISOString(),
+  });
+
+  await setDoc(monthRef, payload, { merge: true });
 }
 
 // Get one-time month data from Firestore
@@ -494,11 +503,11 @@ export async function savePortfolioToCloud(
   const collectionName = uid.startsWith("ws_") ? "workspaces" : "users";
   const portRef = doc(db, collectionName, uid, "settings", "portfolio");
   try {
-    await setDoc(
-      portRef,
-      { portfolio, updatedAt: new Date().toISOString() },
-      { merge: true }
-    );
+    const payload = cleanForFirestore({
+      portfolio,
+      updatedAt: new Date().toISOString(),
+    });
+    await setDoc(portRef, payload, { merge: true });
   } catch (err) {
     console.error("Erro ao salvar carteira de investimentos na nuvem:", err);
   }

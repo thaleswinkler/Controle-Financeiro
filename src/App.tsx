@@ -90,6 +90,39 @@ export function savePortfolioToVault(portfolio: Investimento[], uid?: string) {
   } catch {}
 }
 
+export function replicateInvestmentsAcrossMonths(
+  portfolio: Investimento[],
+  fromMonthYear: string,
+  currentUserUid?: string
+) {
+  if (!portfolio) return;
+  savePortfolioToVault(portfolio, currentUserUid);
+
+  let curM = fromMonthYear;
+  for (let i = 0; i < 24; i++) {
+    curM = getNextMonth(curM);
+    try {
+      const rawMonth = localStorage.getItem(`fin_iq_month_${curM}`);
+      if (rawMonth) {
+        const parsed = JSON.parse(rawMonth);
+        parsed.investimentos = portfolio;
+        localStorage.setItem(`fin_iq_month_${curM}`, JSON.stringify(parsed));
+      }
+    } catch {}
+
+    if (currentUserUid) {
+      let monthDataToSave: any = null;
+      try {
+        const raw = localStorage.getItem(`fin_iq_month_${curM}`);
+        if (raw) monthDataToSave = JSON.parse(raw);
+      } catch {}
+      if (monthDataToSave) {
+        saveMonthDataToCloud(currentUserUid, curM, monthDataToSave).catch(console.error);
+      }
+    }
+  }
+}
+
 export function getPreviousMonth(monthYear: string): string {
   const [y, m] = monthYear.split("-").map(Number);
   let py = y;
@@ -1892,19 +1925,24 @@ export default function App() {
   // --- Handlers for Investimentos ---
   const handleAddInvestimento = (newInv: Omit<Investimento, "id">) => {
     const item: Investimento = { id: "inv_" + Date.now(), ...newInv };
-    saveState({ ...data, investimentos: [item, ...data.investimentos] });
-    addToast("success", "Aporte registrado!", `${item.description} adicionado ao patrimônio.`);
+    const newInvs = [item, ...data.investimentos];
+    saveState({ ...data, investimentos: newInvs });
+    replicateInvestmentsAcrossMonths(newInvs, selectedPeriod, currentUser?.uid);
+    addToast("success", "Ativo Cadastrado!", `${item.description} salvo e replicado nos meses seguintes.`);
   };
 
   const handleUpdateInvestimento = (updated: Investimento) => {
     const newInvs = data.investimentos.map((i) => (i.id === updated.id ? updated : i));
     saveState({ ...data, investimentos: newInvs });
-    addToast("success", "Aporte atualizado", `${updated.description} alterado com sucesso.`);
+    replicateInvestmentsAcrossMonths(newInvs, selectedPeriod, currentUser?.uid);
+    addToast("success", "Ativo Atualizado!", `${updated.description} alterado e replicado.`);
   };
 
   const handleDeleteInvestimento = (id: string) => {
-    saveState({ ...data, investimentos: data.investimentos.filter((i) => i.id !== id) });
-    addToast("info", "Aporte removido");
+    const newInvs = data.investimentos.filter((i) => i.id !== id);
+    saveState({ ...data, investimentos: newInvs });
+    replicateInvestmentsAcrossMonths(newInvs, selectedPeriod, currentUser?.uid);
+    addToast("info", "Ativo Removido", "Alteração refletida nos meses seguintes.");
   };
 
   // --- Handlers for Imprevistos ---
