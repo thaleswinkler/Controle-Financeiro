@@ -843,9 +843,6 @@ export default function App() {
         try {
           localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(updated));
         } catch {}
-        if (currentUser) {
-          saveMonthDataToCloud(currentUser.uid, selectedPeriod, updated).catch(console.error);
-        }
         return updated;
       }
       return current;
@@ -986,19 +983,19 @@ export default function App() {
         } catch {}
 
         if (remoteData && remoteData.monthYear === selectedPeriod) {
-          // Filter out any cartoes matching deleted keys or signatures
+          // Filter out any cartoes matching deleted keys or unwanted card_series_ duplicates
+          const seenCardKeys = new Set<string>();
           const filteredCartoes = (remoteData.cartoes || []).filter((c) => {
-            return (
-              !deletedKeys.has(c.id) &&
-              (!c.installmentSeriesId || !deletedKeys.has(`series_${c.installmentSeriesId}`))
-            );
-          });
+            if (!c || !c.id) return false;
+            if (c.id.startsWith("card_series_")) return false;
+            if (deletedKeys.has(c.id)) return false;
+            if (c.installmentSeriesId && deletedKeys.has(`series_${c.installmentSeriesId}`)) return false;
 
-          const mergedCartoes = mergeProjectedInstallments(
-            filteredCartoes,
-            projectedForThisMonth,
-            deletedKeys
-          );
+            const uniqueSignature = `${c.card}_${c.description.trim().toLowerCase()}_${c.amount}_${c.installments || "1x"}`;
+            if (seenCardKeys.has(uniqueSignature)) return false;
+            seenCardKeys.add(uniqueSignature);
+            return true;
+          });
 
           // DO NOT let empty remote arrays overwrite user's entries: auto-replicate if needed!
           let finalReceitas =
@@ -1037,7 +1034,7 @@ export default function App() {
           const finalCartoes =
             filteredCartoes && filteredCartoes.length > 0
               ? filteredCartoes
-              : mergedCartoes;
+              : mergeProjectedInstallments(filteredCartoes, projectedForThisMonth, deletedKeys);
 
           const finalData: FinancialData = {
             ...remoteData,
@@ -1055,14 +1052,6 @@ export default function App() {
           try {
             localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(finalData));
           } catch {}
-
-          // If local/replicated data had items that cloud was missing, sync back to cloud
-          const remoteWasMissing =
-            (!remoteData.receitas || remoteData.receitas.length === 0) ||
-            (!remoteData.gastosFixos || remoteData.gastosFixos.length === 0);
-          if (remoteWasMissing && (finalReceitas.length > 0 || finalFixed.length > 0)) {
-            saveMonthDataToCloud(currentUser.uid, selectedPeriod, finalData).catch(console.error);
-          }
         } else if (remoteData === null) {
           // If month doesn't exist on cloud yet, check if local storage already has user data!
           if (localData && ((localData.receitas && localData.receitas.length > 0) || (localData.gastosFixos && localData.gastosFixos.length > 0))) {
@@ -1148,6 +1137,7 @@ export default function App() {
       if (!cartoes || !Array.isArray(cartoes) || !mYear) return;
       for (const c of cartoes) {
         if (!c || !c.id) continue;
+        if (c.id.startsWith("card_series_")) continue;
         const key = `${mYear}:::${c.id}`;
         if (!seenMonthItem.has(key)) {
           seenMonthItem.add(key);
@@ -1294,7 +1284,6 @@ export default function App() {
       localStorage.setItem(`fin_iq_month_${selectedPeriod}`, JSON.stringify(data));
       localStorage.setItem(LAST_PERIOD_KEY, newPeriod);
       if (currentUser) {
-        saveMonthDataToCloud(currentUser.uid, selectedPeriod, data).catch(console.error);
         saveLastPeriodToCloud(currentUser.uid, newPeriod).catch(console.error);
       }
     } catch (e) {}
