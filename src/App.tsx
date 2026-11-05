@@ -869,12 +869,7 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // Initial startup projection to ensure all existing installments are projected into next months
-  useEffect(() => {
-    runGlobalInstallmentProjection();
-  }, []);
-
-  // Sync deleted keys and all historical months from cloud whenever user logs in
+  // Startup: sync deleted keys and all historical months from cloud whenever user logs in
   useEffect(() => {
     if (!currentUser) return;
     getDeletionsFromCloud(currentUser.uid)
@@ -1204,8 +1199,9 @@ export default function App() {
 
       let totalInjected = 0;
 
-      // Injects into each target month in LocalStorage IF the month already exists
+      // Injects into each forward target month in LocalStorage IF the month already exists
       for (const [mYear, items] of Object.entries(projectedByMonth)) {
+        if (mYear <= "2026-12") continue; // Never mutate December 2026 or earlier!
         try {
           const raw = localStorage.getItem(`fin_iq_month_${mYear}`);
           if (raw) {
@@ -1218,18 +1214,28 @@ export default function App() {
         } catch (err) {}
       }
 
-      // Injects into currently viewed month state if affected
-      const currentMonthProjected = projectedByMonth[selectedPeriod];
-      if (currentMonthProjected && currentMonthProjected.length > 0) {
-        const mergedCurrent = mergeProjectedInstallments(data.cartoes, currentMonthProjected, deletedKeys);
-        if (mergedCurrent.length !== data.cartoes.length) {
-          saveState({ ...data, cartoes: mergedCurrent });
+      // Injects into currently viewed month state if affected and is a future month
+      if (selectedPeriod > "2026-12") {
+        const currentMonthProjected = projectedByMonth[selectedPeriod];
+        if (currentMonthProjected && currentMonthProjected.length > 0) {
+          const mergedCurrent = mergeProjectedInstallments(data.cartoes, currentMonthProjected, deletedKeys);
+          if (mergedCurrent.length !== data.cartoes.length) {
+            saveState({ ...data, cartoes: mergedCurrent });
+          }
         }
       }
 
-      // Injects into Firestore across all affected months
-      if (currentUser && Object.keys(projectedByMonth).length > 0) {
-        await addInstallmentsToCloud(currentUser.uid, projectedByMonth, data);
+      // Clean out base and past months from projected payload before saving to cloud
+      const futureOnlyPayload: Record<string, GastoCartao[]> = {};
+      for (const [mYear, items] of Object.entries(projectedByMonth)) {
+        if (mYear > "2026-12") {
+          futureOnlyPayload[mYear] = items;
+        }
+      }
+
+      // Injects into Firestore only for future months
+      if (currentUser && Object.keys(futureOnlyPayload).length > 0) {
+        await addInstallmentsToCloud(currentUser.uid, futureOnlyPayload, data);
       }
 
       if (notifyUser) {
