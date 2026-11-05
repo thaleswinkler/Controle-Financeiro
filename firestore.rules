@@ -45,14 +45,20 @@ service cloud.firestore {
 
     // Direct multi-device synchronized workspaces
     match /workspaces/{workspaceId} {
-      allow read, write: if isValidId(workspaceId);
+      allow get: if isValidId(workspaceId);
+      allow list: if true;
+      allow write: if isValidId(workspaceId);
 
       match /months/{monthYear} {
-        allow read, write: if isValidId(workspaceId) && isValidId(monthYear);
+        allow get: if isValidId(workspaceId) && isValidId(monthYear);
+        allow list: if isValidId(workspaceId);
+        allow write: if isValidId(workspaceId) && isValidId(monthYear);
       }
 
       match /settings/{settingId} {
-        allow read, write: if isValidId(workspaceId) && isValidId(settingId);
+        allow get: if isValidId(workspaceId) && isValidId(settingId);
+        allow list: if isValidId(workspaceId);
+        allow write: if isValidId(workspaceId) && isValidId(settingId);
       }
     }
   }

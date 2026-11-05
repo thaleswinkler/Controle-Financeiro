@@ -57,6 +57,7 @@ import {
   savePortfolioToCloud,
   getPortfolioFromCloud,
   getStoredCloudSession,
+  DEFAULT_WORKSPACE_SESSION,
   logoutUser,
   CloudUserSession,
 } from "./lib/firebase";
@@ -647,7 +648,7 @@ export function applyDecemberStandardCleanup(currentUserUid?: string): Financial
     }
   } catch {}
 
-  const finalDecCartoes = [...decCartoes, ...existingUserAvista];
+  const finalDecCartoes = INITIAL_DATA.cartoes;
 
   // Investimentos patrimoniais
   const initialPortfolio = getStoredPortfolioVault();
@@ -665,14 +666,14 @@ export function applyDecemberStandardCleanup(currentUserUid?: string): Financial
     investimentos: finalInvestimentos,
     imprevistos: [],
     metaRiqueza: 100000.0,
-    investimentoAcumuladoAnterior: 20555.51,
+    investimentoAcumuladoAnterior: 22453.20,
   };
 
   try {
     localStorage.setItem("fin_iq_month_2026-12", JSON.stringify(decData));
     localStorage.setItem(LAST_PERIOD_KEY, "2026-12");
-    savePortfolioToVault(finalInvestimentos, currentUserUid);
-    saveReceitasToVault(INITIAL_DATA.receitas, currentUserUid);
+    savePortfolioToVault(finalInvestimentos);
+    saveReceitasToVault(INITIAL_DATA.receitas);
   } catch {}
 
   // 3. Limpar os meses seguintes de qualquer resquício errado e projetar exatamente as parcelas corretas
@@ -680,49 +681,18 @@ export function applyDecemberStandardCleanup(currentUserUid?: string): Financial
     {
       month: "2027-01",
       cartoes: [
-        { ...decCartoes[0], id: "card_c6_carro_impacto_prime_inst_2", date: "2027-01-28", installments: "2/4", currentInstallment: 2 },
-        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_2", date: "2027-01-10", installments: "2/6", currentInstallment: 2 },
-        { ...decCartoes[2], id: "card_amazon_prime_inst_2", date: "2027-01-10", installments: "2/3", currentInstallment: 2 },
-        { ...decCartoes[3], id: "card_c6_colombo_inst_2", date: "2027-01-03", installments: "2/3", currentInstallment: 2 },
-        { ...decCartoes[4], id: "card_c6_ml_6512_inst_2", date: "2027-01-10", installments: "2/6", currentInstallment: 2 },
-        { ...decCartoes[5], id: "card_c6_ml_5414_inst_2", date: "2027-01-10", installments: "2/4", currentInstallment: 2 },
-        { ...decCartoes[6], id: "card_c6_ml_5214_inst_2", date: "2027-01-28", installments: "2/4", currentInstallment: 2 },
-      ],
-    },
-    {
-      month: "2027-02",
-      cartoes: [
-        { ...decCartoes[0], id: "card_c6_carro_impacto_prime_inst_3", date: "2027-02-28", installments: "3/4", currentInstallment: 3 },
-        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_3", date: "2027-02-10", installments: "3/6", currentInstallment: 3 },
-        { ...decCartoes[2], id: "card_amazon_prime_inst_3", date: "2027-02-10", installments: "3/3", currentInstallment: 3 },
-        { ...decCartoes[3], id: "card_c6_colombo_inst_3", date: "2027-02-03", installments: "3/3", currentInstallment: 3 },
-        { ...decCartoes[4], id: "card_c6_ml_6512_inst_3", date: "2027-02-10", installments: "3/6", currentInstallment: 3 },
-        { ...decCartoes[5], id: "card_c6_ml_5414_inst_3", date: "2027-02-10", installments: "3/4", currentInstallment: 3 },
-        { ...decCartoes[6], id: "card_c6_ml_5214_inst_3", date: "2027-02-28", installments: "3/4", currentInstallment: 3 },
-      ],
-    },
-    {
-      month: "2027-03",
-      cartoes: [
-        { ...decCartoes[0], id: "card_c6_carro_impacto_prime_inst_4", date: "2027-03-28", installments: "4/4", currentInstallment: 4 },
-        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_4", date: "2027-03-10", installments: "4/6", currentInstallment: 4 },
-        { ...decCartoes[4], id: "card_c6_ml_6512_inst_4", date: "2027-03-10", installments: "4/6", currentInstallment: 4 },
-        { ...decCartoes[5], id: "card_c6_ml_5414_inst_4", date: "2027-03-10", installments: "4/4", currentInstallment: 4 },
-        { ...decCartoes[6], id: "card_c6_ml_5214_inst_4", date: "2027-03-28", installments: "4/4", currentInstallment: 4 },
-      ],
-    },
-    {
-      month: "2027-04",
-      cartoes: [
-        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_5", date: "2027-04-10", installments: "5/6", currentInstallment: 5 },
-        { ...decCartoes[4], id: "card_c6_ml_6512_inst_5", date: "2027-04-10", installments: "5/6", currentInstallment: 5 },
-      ],
-    },
-    {
-      month: "2027-05",
-      cartoes: [
-        { ...decCartoes[1], id: "card_bb_carro_impacto_inst_6", date: "2027-05-10", installments: "6/6", currentInstallment: 6 },
-        { ...decCartoes[4], id: "card_c6_ml_6512_inst_6", date: "2027-05-10", installments: "6/6", currentInstallment: 6 },
+        { ...decCartoes[3], id: "card_c6_ml_5414_inst_2", installments: "2/4", currentInstallment: 2, date: "2027-01-10" },
+        { ...decCartoes[5], id: "card_bb_carro_impacto_inst_2", installments: "2/6", currentInstallment: 2, date: "2027-01-10" },
+        { ...decCartoes[6], id: "card_c6_colombo_inst_2", installments: "2/3", currentInstallment: 2, date: "2027-01-03" },
+        { ...decCartoes[7], id: "card_c6_carro_impacto_inst_2", installments: "2/4", currentInstallment: 2, date: "2027-01-28" },
+        { ...decCartoes[8], id: "card_amazon_inst_2", installments: "2/3", currentInstallment: 2, date: "2027-01-10" },
+        { ...decCartoes[9], id: "card_c6_ml_6512_inst_2", installments: "2/6", currentInstallment: 2, date: "2027-01-10" },
+        { ...decCartoes[10], id: "card_c6_ml_5214_inst_2", installments: "2/4", currentInstallment: 2, date: "2027-01-28" },
+        { ...decCartoes[11], id: "card_bb_impacto_pirme_inst_3", installments: "3/7", currentInstallment: 3, date: "2027-01-10" },
+        { ...decCartoes[12], id: "card_c6_ml_6512_inst_3", installments: "3/7", currentInstallment: 3, date: "2027-01-10" },
+        { ...decCartoes[13], id: "card_c6_ml_5214_inst_3", installments: "3/5", currentInstallment: 3, date: "2027-01-10" },
+        { ...decCartoes[14], id: "card_c6_colombo_inst_3", installments: "3/4", currentInstallment: 3, date: "2027-01-03" },
+        { ...decCartoes[15], id: "card_amazon_inst_3", installments: "3/3", currentInstallment: 3, date: "2027-01-10" },
       ],
     },
   ];
@@ -746,25 +716,16 @@ export function applyDecemberStandardCleanup(currentUserUid?: string): Financial
       investimentos: finalInvestimentos,
       imprevistos: [],
       metaRiqueza: 100000.0,
-      investimentoAcumuladoAnterior: 20555.51,
+      investimentoAcumuladoAnterior: 22453.20,
     };
 
     try {
       localStorage.setItem(`fin_iq_month_${fut.month}`, JSON.stringify(futData));
     } catch {}
-
-    if (currentUserUid) {
-      saveMonthDataToCloud(currentUserUid, fut.month, futData).catch(console.error);
-    }
-  }
-
-  if (currentUserUid) {
-    saveMonthDataToCloud(currentUserUid, "2026-12", decData).catch(console.error);
-    saveLastPeriodToCloud(currentUserUid, "2026-12").catch(console.error);
   }
 
   try {
-    localStorage.setItem("fin_iq_dec26_standard_applied_v4", "true");
+    localStorage.setItem("fin_iq_dec26_standard_applied_v5", "true");
   } catch {}
 
   return decData;
@@ -776,7 +737,7 @@ export default function App() {
 
   const [selectedPeriod, setSelectedPeriod] = useState<string>(() => {
     try {
-      const applied = localStorage.getItem("fin_iq_dec26_standard_applied_v4");
+      const applied = localStorage.getItem("fin_iq_dec26_standard_applied_v5");
       if (!applied) {
         return "2026-12";
       }
@@ -790,7 +751,7 @@ export default function App() {
 
   const [data, setData] = useState<FinancialData>(() => {
     try {
-      const applied = localStorage.getItem("fin_iq_dec26_standard_applied_v4");
+      const applied = localStorage.getItem("fin_iq_dec26_standard_applied_v5");
       if (!applied) {
         return applyDecemberStandardCleanup();
       }
@@ -895,12 +856,11 @@ export default function App() {
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user) {
-        const isThales = user.email?.toLowerCase().includes("thales");
-        const workspaceId = isThales ? "ws_5490bffb6e206b14b606e1d3315b9ef5" : user.uid;
+        const workspaceId = "ws_5490bffb6e206b14b606e1d3315b9ef5";
         const session: CloudUserSession = {
           uid: workspaceId,
-          email: user.email || "",
-          displayName: user.displayName || user.email?.split("@")[0] || "Usuário",
+          email: user.email || DEFAULT_WORKSPACE_SESSION.email,
+          displayName: user.displayName || DEFAULT_WORKSPACE_SESSION.displayName,
           isFirebaseUser: true,
         };
         setCurrentUser(session);
@@ -991,47 +951,14 @@ export default function App() {
           for (const mData of cloudMonths) {
             if (mData.monthYear) {
               const localKey = `fin_iq_month_${mData.monthYear}`;
-              const localRaw = localStorage.getItem(localKey);
-              let shouldSave = !localRaw;
-              if (localRaw) {
-                try {
-                  const parsedLocal = JSON.parse(localRaw);
-                  const localCount =
-                    (parsedLocal.receitas?.length || 0) +
-                    (parsedLocal.gastosFixos?.length || 0) +
-                    (parsedLocal.cartoes?.length || 0);
-                  const cloudCount =
-                    (mData.receitas?.length || 0) +
-                    (mData.gastosFixos?.length || 0) +
-                    (mData.cartoes?.length || 0);
-                  if (cloudCount >= localCount) {
-                    shouldSave = true;
-                  }
-                } catch {
-                  shouldSave = true;
-                }
-              }
-              if (shouldSave) {
-                try {
-                  localStorage.setItem(localKey, JSON.stringify(mData));
-                } catch {}
-              }
+              try {
+                localStorage.setItem(localKey, JSON.stringify(mData));
+              } catch {}
               if (mData.monthYear === selectedPeriod) {
-                setData((prev) => {
-                  const cloudCount =
-                    (mData.receitas?.length || 0) +
-                    (mData.gastosFixos?.length || 0) +
-                    (mData.cartoes?.length || 0);
-                  const prevCount =
-                    (prev.receitas?.length || 0) +
-                    (prev.gastosFixos?.length || 0) +
-                    (prev.cartoes?.length || 0);
-                  return cloudCount >= prevCount ? mData : prev;
-                });
+                setData(mData);
               }
             }
           }
-          runGlobalInstallmentProjection();
         }
       })
       .catch(console.error);
@@ -1112,11 +1039,16 @@ export default function App() {
               ? localData.investimentos
               : dataRef.current.investimentos;
 
+          const finalCartoes =
+            filteredCartoes && filteredCartoes.length > 0
+              ? filteredCartoes
+              : mergedCartoes;
+
           const finalData: FinancialData = {
             ...remoteData,
             monthYear: selectedPeriod,
             receitas: finalReceitas,
-            cartoes: mergedCartoes,
+            cartoes: finalCartoes,
             gastosFixos: finalFixed,
             investimentos: finalInvestimentos,
             cards:
@@ -1239,6 +1171,7 @@ export default function App() {
         const key = localStorage.key(i);
         if (key && key.startsWith("fin_iq_month_")) {
           const mYear = key.replace("fin_iq_month_", "");
+          if (mYear < "2026-12") continue;
           const raw = localStorage.getItem(key);
           if (raw) {
             const parsed = JSON.parse(raw);

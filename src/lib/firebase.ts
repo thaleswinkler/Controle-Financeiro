@@ -488,6 +488,10 @@ export async function getCardsFromCloud(uid: string): Promise<import("../types")
     if (snap.exists() && Array.isArray(snap.data()?.cards)) {
       return snap.data().cards;
     }
+    const snapConfig = await getDoc(doc(db, collectionName, uid, "settings", "cards_config"));
+    if (snapConfig.exists() && Array.isArray(snapConfig.data()?.cards)) {
+      return snapConfig.data().cards;
+    }
   } catch (err) {
     console.error("Erro ao carregar cartões da nuvem:", err);
   }
