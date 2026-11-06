@@ -488,7 +488,7 @@ function isLegacyMockData(raw: any): boolean {
 
 function purgeLegacyMockStorage() {
   try {
-    const toRemove: string[] = [];
+    const toRemove: string[] = [DELETED_KEYS_STORAGE];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (k && k.startsWith("fin_iq_")) {
@@ -873,6 +873,10 @@ export default function App() {
       .then((cloudKeys) => {
         if (cloudKeys && cloudKeys.length > 0) {
           recordDeletedExpenseKeys(cloudKeys);
+        } else {
+          try {
+            localStorage.removeItem(DELETED_KEYS_STORAGE);
+          } catch {}
         }
       })
       .catch(console.error);
@@ -988,8 +992,6 @@ export default function App() {
           const filteredCartoes = (remoteData.cartoes || []).filter((c) => {
             if (!c || !c.id) return false;
             if (c.id.startsWith("card_series_")) return false;
-            if (deletedKeys.has(c.id)) return false;
-            if (c.installmentSeriesId && deletedKeys.has(`series_${c.installmentSeriesId}`)) return false;
 
             const uniqueSignature = `${c.card}_${c.description.trim().toLowerCase()}_${c.amount}_${c.installments || "1x"}`;
             if (seenCardKeys.has(uniqueSignature)) return false;
