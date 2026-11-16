@@ -11,6 +11,7 @@ import {
   Edit3,
   Check,
   X,
+  CalendarRange,
 } from "lucide-react";
 import { GastoFixo } from "../types";
 import { formatBRL, formatDateBR, getTodayISO } from "../utils/formatters";
@@ -24,7 +25,9 @@ interface GastosFixosViewProps {
   onMarkAllAsPaid: () => void;
   onDeleteGastoFixo: (id: string) => void;
   onReplicateNextMonth: () => void;
+  onReplicateAllFutureMonths?: () => void;
   onReplicateFromPreviousMonth?: () => void;
+  isReplicatingAll?: boolean;
 }
 
 export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
@@ -35,7 +38,9 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
   onMarkAllAsPaid,
   onDeleteGastoFixo,
   onReplicateNextMonth,
+  onReplicateAllFutureMonths,
   onReplicateFromPreviousMonth,
+  isReplicatingAll = false,
 }) => {
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -292,6 +297,21 @@ export const GastosFixosView: React.FC<GastosFixosViewProps> = ({
               <CopyPlus className="w-3.5 h-3.5" />
               <span>Replicar p/ Mês Seguinte</span>
             </button>
+
+            {onReplicateAllFutureMonths && (
+              <button
+                type="button"
+                disabled={isReplicatingAll || gastosFixos.length === 0}
+                onClick={onReplicateAllFutureMonths}
+                title="Copiar estas contas fixas para todos os meses seguintes (incluindo nuvem)"
+                className="px-2.5 py-1.5 rounded-xl border border-indigo-500/40 bg-indigo-500/15 hover:bg-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-[11px] font-semibold text-indigo-300 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <CalendarRange className="w-3.5 h-3.5 text-indigo-400" />
+                <span>
+                  {isReplicatingAll ? "Replicando..." : "Replicar p/ Todos os Meses à Frente"}
+                </span>
+              </button>
+            )}
 
             {totalPendente > 0 && (
               <button

@@ -1647,6 +1647,118 @@ export default function App() {
     );
   };
 
+  const handleReplicateFixedAllForward = async () => {
+    if (!data.gastosFixos || data.gastosFixos.length === 0) {
+      addToast("warning", "Nenhuma conta fixa cadastrada para replicar.");
+      return;
+    }
+
+    const recurringItems = data.gastosFixos.filter((f) => f.recurring !== false);
+    if (recurringItems.length === 0) {
+      addToast("warning", "Nenhuma conta fixa recorrente para replicar.");
+      return;
+    }
+
+    setIsCloudSyncing(true);
+    try {
+      const targetMonthSet = new Set<string>();
+
+      // Always cover at least the next 12 months ahead of selectedPeriod
+      let cursor = selectedPeriod;
+      for (let i = 0; i < 12; i++) {
+        cursor = getNextMonth(cursor);
+        targetMonthSet.add(cursor);
+      }
+
+      // Include any localStorage months strictly ahead of selectedPeriod
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith("fin_iq_month_")) {
+            const mYear = key.replace("fin_iq_month_", "");
+            if (/^\d{4}-\d{2}$/.test(mYear) && mYear > selectedPeriod) {
+              targetMonthSet.add(mYear);
+            }
+          }
+        }
+      } catch {}
+
+      // Include all cloud months strictly ahead of selectedPeriod and preserve their data
+      const cloudMap = new Map<string, FinancialData>();
+      if (currentUser) {
+        try {
+          const cloudMonths = await getAllUserMonthsFromCloud(currentUser.uid);
+          for (const cm of cloudMonths) {
+            if (cm?.monthYear && /^\d{4}-\d{2}$/.test(cm.monthYear)) {
+              cloudMap.set(cm.monthYear, cm);
+              if (cm.monthYear > selectedPeriod) {
+                targetMonthSet.add(cm.monthYear);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("Erro ao buscar meses da nuvem para replicação:", err);
+        }
+      }
+
+      const targetMonths = Array.from(targetMonthSet).sort();
+      const cloudSaves: Promise<void>[] = [];
+
+      for (const mYear of targetMonths) {
+        const cloned: GastoFixo[] = recurringItems.map((f, idx) => ({
+          ...f,
+          id: `fix_${mYear}_${idx}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          status: "pendente" as const,
+          date: `${mYear}-${(f.date || "").split("-")[2] || "05"}`,
+        }));
+
+        let baseData: FinancialData | null = cloudMap.get(mYear) || null;
+        if (!baseData) {
+          try {
+            const rawLocal = localStorage.getItem(`fin_iq_month_${mYear}`);
+            if (rawLocal) baseData = JSON.parse(rawLocal);
+          } catch {}
+        }
+        if (!baseData) {
+          baseData = buildReplicatedMonthBaseline(mYear, data);
+        }
+
+        const updatedMonth: FinancialData = {
+          ...baseData,
+          monthYear: mYear,
+          gastosFixos: cloned,
+        };
+
+        try {
+          localStorage.setItem(`fin_iq_month_${mYear}`, JSON.stringify(updatedMonth));
+        } catch {}
+
+        if (currentUser) {
+          cloudSaves.push(saveMonthDataToCloud(currentUser.uid, mYear, updatedMonth));
+        }
+      }
+
+      if (cloudSaves.length > 0) {
+        await Promise.all(cloudSaves);
+      }
+
+      addToast(
+        "success",
+        "Gastos Fixos Replicados à Frente!",
+        `${recurringItems.length} contas fixas replicadas para os ${targetMonths.length} meses seguintes (${targetMonths[0]} até ${targetMonths[targetMonths.length - 1]}).`
+      );
+    } catch (err) {
+      console.error("Erro ao replicar gastos fixos para todos os meses à frente:", err);
+      addToast(
+        "warning",
+        "Replicado localmente com falha na nuvem",
+        "Tente novamente em instantes para garantir a sincronização na nuvem."
+      );
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
   // --- Handlers for Credit Cards & Installments Across Future Months ---
   const handleAddGastoCartao = async (
     newGasto: Omit<GastoCartao, "id">,
@@ -2178,7 +2290,9 @@ export default function App() {
             onMarkAllAsPaid={handleMarkAllAsPaid}
             onDeleteGastoFixo={handleDeleteGastoFixo}
             onReplicateNextMonth={handleReplicateFixedExpenses}
+            onReplicateAllFutureMonths={handleReplicateFixedAllForward}
             onReplicateFromPreviousMonth={handleReplicateFixedFromPreviousMonth}
+            isReplicatingAll={isCloudSyncing}
           />
         )}
 
