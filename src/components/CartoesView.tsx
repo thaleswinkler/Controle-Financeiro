@@ -21,6 +21,7 @@ import {
   addMonthsToDate,
   getMonthYearFromDate,
   calculateInvoiceMonth,
+  normalizeCardId,
   INSTALLMENT_COUNT_OPTIONS,
 } from "../utils/installments";
 import { CardModal } from "./CardModal";
@@ -102,7 +103,7 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
   const filteredExpenses =
     activeCardFilter === "TODOS"
       ? cartoes
-      : cartoes.filter((c) => c.card === activeCardFilter);
+      : cartoes.filter((c) => normalizeCardId(c.card, cards) === activeCardFilter);
 
   // Calculations for installments preview
   const numVal = parseFloat(amount.replace(",", ".")) || 0;
@@ -181,12 +182,13 @@ export const CartoesView: React.FC<CartoesViewProps> = ({
 
   const getCardTotals = (cardId: string) => {
     return cartoes
-      .filter((c) => c.card === cardId)
+      .filter((c) => normalizeCardId(c.card, cards) === cardId)
       .reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   };
 
   const getCardBadge = (cardId: string) => {
-    const found = cards.find((c) => c.id === cardId);
+    const normId = normalizeCardId(cardId, cards);
+    const found = cards.find((c) => c.id === normId || c.id === cardId);
     if (!found) return { name: cardId, color: "#94a3b8" };
     return { name: found.name, color: found.accentColor };
   };

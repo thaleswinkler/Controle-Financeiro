@@ -84,6 +84,24 @@ export interface InstallmentGenerationParams {
  * - Parcela 2 entra no mês seguinte (+1).
  * - Parcela 3 entra no mês posterior (+2), e assim sucessivamente.
  */
+export function normalizeCardId(card: string, cardsConfig?: CardConfig[]): string {
+  const raw = (card || "").trim();
+  const lower = raw.toLowerCase();
+  if (cardsConfig && cardsConfig.length > 0) {
+    const found = cardsConfig.find(
+      (c) =>
+        c.id.toLowerCase() === lower ||
+        c.name.toLowerCase() === lower ||
+        (c.bankName && c.bankName.toLowerCase() === lower)
+    );
+    if (found) return found.id;
+  }
+  if (lower === "bb" || lower.includes("banco do brasil")) return "BB";
+  if (lower === "c6" || lower.includes("c6 bank") || lower.includes("c6 carbon")) return "C6";
+  if (lower === "amazon" || lower.includes("amazon prime")) return "Amazon";
+  return raw;
+}
+
 export function generateInstallments(
   params: InstallmentGenerationParams
 ): GeneratedInstallment[] {
@@ -96,7 +114,7 @@ export function generateInstallments(
     startInstallment = 1,
     installmentAmount,
     totalPurchaseAmount,
-    seriesId = "series_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+    seriesId = "s_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
   } = params;
 
   const baseMonth = getMonthYearFromDate(startDate);
@@ -320,8 +338,9 @@ export function projectMissingInstallmentsFromExpenses(
 
     if (!rawBillingMonth || !/^\d{4}-\d{2}$/.test(rawBillingMonth)) continue;
 
+    const normalizedCard = normalizeCardId(item.card, _cardsConfig);
     const safeDesc = item.description.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
-    const safeCard = (item.card || "card").toLowerCase();
+    const safeCard = (normalizedCard || "card").toLowerCase();
     const totalAmt = item.totalPurchaseAmount || item.amount * total;
     const seriesId =
       item.installmentSeriesId ||
@@ -335,7 +354,8 @@ export function projectMissingInstallmentsFromExpenses(
     // Day of purchase in month
     const dayPart = item.date && item.date.split("-")[2] ? item.date.split("-")[2] : "10";
 
-    for (let inst = 1; inst <= total; inst++) {
+    // Project ONLY forward from the current installment (never mutate past months!)
+    for (let inst = current; inst <= total; inst++) {
       // Calculate target month for installment 'inst' relative to 'rawBillingMonth' where 'current' is billed
       const monthOffset = inst - current;
       const targetMonthYear = addMonthsToDate(rawBillingMonth + "-01", monthOffset).slice(0, 7);
@@ -356,7 +376,7 @@ export function projectMissingInstallmentsFromExpenses(
 
       const newItem: GastoCartao = {
         id: instId,
-        card: item.card,
+        card: normalizedCard,
         description: item.description,
         amount: Math.round(item.amount * 100) / 100,
         date: targetDate,
@@ -393,7 +413,7 @@ export function cleanupMonthCartoes(
 
   for (const item of cartoes) {
     const cleanDesc = (item.description || "").trim().toLowerCase();
-    const cleanCard = (item.card || "").trim().toLowerCase();
+    const cleanCard = normalizeCardId(item.card || "").toLowerCase();
     const cleanInst = (item.installments || "").trim().toLowerCase();
     const cleanAmt = Math.round(Number(item.amount || 0) * 100);
 
@@ -424,7 +444,8 @@ export function cleanupMonthCartoes(
 export function mergeProjectedInstallments(
   existingCartoes: GastoCartao[],
   projected: GastoCartao[],
-  deletedKeys?: Set<string>
+  deletedKeys?: Set<string>,
+  cardsConfig?: CardConfig[]
 ): GastoCartao[] {
   const result = [...existingCartoes];
 
@@ -440,6 +461,9 @@ export function mergeProjectedInstallments(
       }
     }
 
+    const itemNormCard = normalizeCardId(item.card, cardsConfig).toLowerCase();
+    const itemAmt = Math.round(Number(item.amount || 0) * 100);
+
     // Check if the exact installment already exists
     const exactIdx = result.findIndex(
       (c) =>
@@ -449,7 +473,8 @@ export function mergeProjectedInstallments(
           c.installmentSeriesId === item.installmentSeriesId &&
           c.currentInstallment === item.currentInstallment) ||
         (c.description.trim().toLowerCase() === item.description.trim().toLowerCase() &&
-          c.card === item.card &&
+          normalizeCardId(c.card, cardsConfig).toLowerCase() === itemNormCard &&
+          Math.round(Number(c.amount || 0) * 100) === itemAmt &&
           c.installments === item.installments)
     );
 
@@ -465,7 +490,8 @@ export function mergeProjectedInstallments(
           item.installmentSeriesId &&
           c.installmentSeriesId === item.installmentSeriesId) ||
         (c.description.trim().toLowerCase() === item.description.trim().toLowerCase() &&
-          c.card === item.card &&
+          normalizeCardId(c.card, cardsConfig).toLowerCase() === itemNormCard &&
+          Math.round(Number(c.amount || 0) * 100) === itemAmt &&
           c.totalInstallments === item.totalInstallments &&
           (c.totalInstallments || 1) > 1)
     );

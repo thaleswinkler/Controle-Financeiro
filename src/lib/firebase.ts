@@ -20,6 +20,7 @@ import {
 } from "firebase/auth";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { FinancialData } from "../types";
+import { mergeProjectedInstallments } from "../utils/installments";
 
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -305,25 +306,22 @@ export async function addInstallmentsToCloud(
         };
       }
 
-      const mergedCartoes = [...existingCartoes];
-      for (const item of newItems) {
-        const existingIdx = mergedCartoes.findIndex((c) => c.id === item.id);
-        if (existingIdx >= 0) {
-          mergedCartoes[existingIdx] = item;
-        } else {
-          mergedCartoes.push(item);
-        }
-      }
+      const mergedCartoes = mergeProjectedInstallments(
+        existingCartoes,
+        newItems,
+        undefined,
+        baseData.cards || templateData.cards
+      );
 
       await setDoc(
         monthRef,
-        {
+        cleanForFirestore({
           ...baseData,
           monthYear: targetMonth,
           cartoes: mergedCartoes,
           userId: uid,
           updatedAt: new Date().toISOString(),
-        },
+        }),
         { merge: true }
       );
     } catch (err) {
